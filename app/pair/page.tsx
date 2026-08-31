@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { formatUserError } from "@/lib/error-messages";
 
 export default function PairPage() {
   const [code, setCode] = useState("");
@@ -14,7 +15,7 @@ export default function PairPage() {
   const handleSubmit = async (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
     if (!/^\d{6}$/.test(code)) {
-      setError("Enter the 6-digit code.");
+      setError(formatUserError("pairing_failed"));
       return;
     }
     setBusy(true);
@@ -25,15 +26,15 @@ export default function PairPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, event_id: eventId }),
       });
-      const data = (await res.json()) as { display_url?: string; error?: string };
+      const data = (await res.json()) as { display_url?: string };
       if (!res.ok || !data.display_url) {
-        setError(data.error ?? "Pairing failed. Check the code and try again.");
+        setError(formatUserError("pairing_failed"));
         setBusy(false);
         return;
       }
       window.location.href = data.display_url;
     } catch {
-      setError("Network error. Check your connection and try again.");
+      setError(formatUserError("pairing_failed"));
       setBusy(false);
     }
   };

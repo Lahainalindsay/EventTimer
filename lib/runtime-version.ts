@@ -44,3 +44,10 @@ export function applyRuntimeVersionCas(
   }
   return { ok: true, version: storedVersion + 1 };
 }
+
+export function reconcileRuntimeConflict<T extends VersionedRuntime>(
+  attempted: VersionedRuntime,
+  authoritative: T,
+): T | null {
+  return shouldAcceptRuntimeUpdate(attempted, authoritative) ? authoritative : null;
+}

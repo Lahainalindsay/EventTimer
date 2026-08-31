@@ -26,10 +26,11 @@ export function TimerDisplay({
         : running
           ? "ON TIME"
           : "PAUSED";
+  const timerAriaLabel = `${stateLabel}. ${formatTime(remaining)} remaining.`;
 
   return (
     <>
-      <div className="timer" aria-live="polite" data-state={stateName}>
+      <div className="timer" role="timer" aria-live="off" aria-label={timerAriaLabel} data-state={stateName}>
         {formatTime(remaining)}
       </div>
       <div className="timer-state" data-state={stateName}>

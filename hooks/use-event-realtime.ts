@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/display-access";
+import { reportError } from "@/lib/observability";
 import type { Connection, MessageRow, ProductionCue, RuntimeRow } from "@/lib/types";
 
 interface UseEventRealtimeOptions {
   currentId: string;
   displayToken?: string;
+  operatorEmail?: string;
   onRuntimeUpdate: (runtime: RuntimeRow) => void;
   onMessageInsert: (eventId: string, message: MessageRow) => void;
   onMessageClear: (eventId: string) => void;
@@ -18,20 +20,25 @@ interface UseEventRealtimeOptions {
 export function useEventRealtime({
   currentId,
   displayToken,
+  operatorEmail,
   onRuntimeUpdate,
   onMessageInsert,
   onMessageClear,
   onCueUpsert,
   onCueClear,
-}: UseEventRealtimeOptions): Connection {
+}: UseEventRealtimeOptions): { connection: Connection; operatorCount: number } {
   const [connection, setConnection] = useState<Connection>(
     typeof navigator !== "undefined" && navigator.onLine ? "reconnecting" : "offline",
   );
+  const [operatorCount, setOperatorCount] = useState(0);
 
   useEffect(() => {
     if (!currentId) return;
+
     const channel = supabase
-      .channel(`event-timer-${currentId}`)
+      .channel(`event-timer-${currentId}`, {
+        config: operatorEmail ? { presence: { key: operatorEmail } } : undefined,
+      })
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "event_runtime", filter: `event_id=eq.${currentId}` },
@@ -77,25 +84,54 @@ export function useEventRealtime({
           onCueUpsert(currentId, cue);
         },
       )
-      .subscribe((status) =>
-        setConnection(status === "SUBSCRIBED" ? "live" : navigator.onLine ? "reconnecting" : "offline"),
-      );
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState<{ operator?: string; event_id?: string }>();
+        const count = Object.values(state)
+          .flat()
+          .filter((presence) => presence?.event_id === currentId).length;
+        setOperatorCount(count);
+      })
+      .subscribe(async (status) => {
+        setConnection(status === "SUBSCRIBED" ? "live" : navigator.onLine ? "reconnecting" : "offline");
+        if (status === "SUBSCRIBED" && operatorEmail) {
+          const result = await channel.track({ operator: operatorEmail, event_id: currentId });
+          if (result !== "ok") {
+            reportError({
+              context: "operator_presence",
+              message: "Presence tracking failed",
+              event_id: currentId,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+      });
+
     return () => {
+      setOperatorCount(0);
       void supabase.removeChannel(channel);
     };
-  }, [currentId, onCueClear, onCueUpsert, onRuntimeUpdate, onMessageClear, onMessageInsert]);
+  }, [currentId, onCueClear, onCueUpsert, onRuntimeUpdate, onMessageClear, onMessageInsert, operatorEmail]);
 
   useEffect(() => {
     if (!displayToken) return;
-    const sendHeartbeat = () => {
-      void fetch("/api/display/heartbeat", {
+    const sendHeartbeat = async () => {
+      const res = await fetch("/api/display/heartbeat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: displayToken }),
       });
+      if (!res.ok) {
+        reportError({
+          context: "display_heartbeat",
+          message: "Display heartbeat request failed",
+          timestamp: new Date().toISOString(),
+        });
+      }
     };
-    sendHeartbeat();
-    const id = window.setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    void sendHeartbeat();
+    const id = window.setInterval(() => {
+      void sendHeartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
     return () => window.clearInterval(id);
   }, [displayToken]);
 
@@ -111,5 +147,5 @@ export function useEventRealtime({
     };
   }, []);
 
-  return connection;
+  return { connection, operatorCount };
 }

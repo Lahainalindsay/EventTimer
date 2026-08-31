@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { Session } from "@supabase/supabase-js";
+import { generateAccessToken, sha256Hex, type DisplayType } from "@/lib/display-access";
+import { formatUserError } from "@/lib/error-messages";
+import { reportError } from "@/lib/observability";
 import { adjustTime, computeRemainingSeconds, pause as pauseTimer, resume as resumeTimer } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
-import type { DisplayType } from "@/lib/display-access";
 import type {
   CueType,
   EventData,
   EventDisplay,
+  EventLifecycle,
+  EventMember,
   EventSettings,
   EventTemplate,
   MessagePriority,
@@ -21,6 +25,8 @@ import type {
 
 const uid = () => crypto.randomUUID();
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const LIFECYCLE_VALUES: EventLifecycle[] = ["draft", "ready", "live", "completed", "archived"];
 
 type CompletionReason = "next" | "previous" | "jump" | "restart" | "reset" | "event_end";
 
@@ -81,6 +87,10 @@ function isMissingRelationError(message: string | undefined) {
   return text.includes("does not exist") || text.includes("could not find the table") || text.includes("relation");
 }
 
+function normalizeLifecycle(value: unknown): EventLifecycle {
+  return LIFECYCLE_VALUES.includes(value as EventLifecycle) ? (value as EventLifecycle) : "draft";
+}
+
 function currentSegmentTimerMode(event: EventData, activeIndex: number) {
   return event.segments[activeIndex]?.timerMode ?? "countdown";
 }
@@ -118,27 +128,18 @@ function resolveActiveMessage(messages: MessageRow[], eventId: string, nowIso: s
   };
 }
 
-function runtimePayload(event: EventData, userId: string, version: number) {
-  const active = event.segments[event.active];
-  return {
-    event_id: event.id,
-    current_agenda_item_id: active?.id ?? null,
-    timer_mode: event.timerMode,
-    timer_status: event.running ? "running" : "paused",
-    duration_seconds: event.timerDuration,
-    started_at: event.timerStartedAt,
-    paused_at: event.running ? null : new Date().toISOString(),
-    accumulated_paused_seconds: 0,
-    manual_offset_seconds: 0,
-    updated_by: userId,
-    updated_at: new Date().toISOString(),
-    version,
-  };
-}
-
 function segmentElapsedSeconds(event: EventData): number {
   if (event.timerMode === "count_up") return Math.max(0, Math.round(event.remaining));
   return Math.max(0, Math.round(event.timerDuration - event.remaining));
+}
+
+function runtimeStateFromEvent(event: EventData) {
+  return {
+    durationSeconds: event.timerDuration,
+    manualOffsetSeconds: 0,
+    status: event.running ? ("running" as const) : ("paused" as const),
+    startedAt: event.timerStartedAt,
+  };
 }
 
 export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefined): EventData {
@@ -167,6 +168,7 @@ export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefi
 export interface UseEventDataReturn {
   events: EventData[];
   templates: EventTemplate[];
+  members: EventMember[];
   setEvents: Dispatch<SetStateAction<EventData[]>>;
   currentId: string;
   setCurrentId: Dispatch<SetStateAction<string>>;
@@ -177,9 +179,12 @@ export interface UseEventDataReturn {
   setFeedback: Dispatch<SetStateAction<string>>;
   loadCloud: () => Promise<void>;
   loadTemplates: () => Promise<EventTemplate[]>;
+  loadMembers: (eventId: string) => Promise<EventMember[]>;
   createEvent: (name: string, date: string, venue: string) => Promise<void>;
   duplicateEvent: (sourceId: string, newName: string, newDate: string) => Promise<string>;
   deleteEvent: (id: string) => Promise<boolean>;
+  updateEventLifecycle: (id: string, status: EventLifecycle) => Promise<void>;
+  endEvent: (eventId: string) => Promise<void>;
   toggleTimer: () => void;
   adjustTimer: (deltaSeconds: number) => void;
   setTimer: (seconds: number, running?: boolean) => void;
@@ -200,11 +205,15 @@ export interface UseEventDataReturn {
   saveAsTemplate: (name: string, description: string) => Promise<void>;
   createFromTemplate: (templateId: string, newName: string, newDate: string) => Promise<string>;
   deleteTemplate: (id: string) => Promise<void>;
+  inviteMember: (eventId: string, email: string, role: string) => Promise<{ link: string }>;
+  removeMember: (memberId: string) => Promise<void>;
+  changeMemberRole: (memberId: string, role: string) => Promise<void>;
 }
 
 export function useEventData(session: Session): UseEventDataReturn {
   const [events, setEvents] = useState<EventData[]>([]);
   const [templates, setTemplates] = useState<EventTemplate[]>([]);
+  const [members, setMembers] = useState<EventMember[]>([]);
   const [currentId, setCurrentId] = useState("");
   const [displays, setDisplays] = useState<EventDisplay[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -221,17 +230,23 @@ export function useEventData(session: Session): UseEventDataReturn {
     setEvents((all) => all.map((event) => (event.id === eventId ? mapRuntime(event, runtime) : event)));
   }, []);
 
-  const loadRuntimeRow = useCallback(async (eventId: string): Promise<RuntimeRow | null> => {
+  const loadRuntimeRow = useCallback(async (eventId: string, silent = false): Promise<RuntimeRow | null> => {
     const { data, error } = await supabase.from("event_runtime").select("*").eq("event_id", eventId).maybeSingle();
     if (error) {
-      setFeedback(`Timer sync failed: ${error.message}`);
+      if (!silent) setFeedback(formatUserError("runtime_mutation", error));
+      reportError({
+        context: "runtime_mutation",
+        message: "Authoritative runtime fetch failed",
+        event_id: eventId,
+        timestamp: new Date().toISOString(),
+      });
       return null;
     }
     return (data as RuntimeRow | null) ?? null;
   }, []);
 
   const persistRuntime = useCallback(async (event: EventData, expectedVersion: number) => {
-    const { data, error } = await supabase.rpc("update_runtime_atomic", {
+    const { data, error } = await supabase.rpc("upsert_runtime_atomic", {
       p_event_id: event.id,
       p_expected_version: expectedVersion,
       p_timer_status: event.running ? "running" : "paused",
@@ -242,7 +257,13 @@ export function useEventData(session: Session): UseEventDataReturn {
       p_current_agenda_item_id: event.segments[event.active]?.id ?? null,
     });
     if (error) {
-      setFeedback(`Timer sync failed: ${error.message}`);
+      setFeedback(formatUserError("runtime_mutation", error));
+      reportError({
+        context: "runtime_mutation",
+        message: "Runtime mutation RPC failed",
+        event_id: event.id,
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
     const updated = Array.isArray(data) ? (data[0] as RuntimeRow | undefined) : (data as RuntimeRow | null);
@@ -250,25 +271,31 @@ export function useEventData(session: Session): UseEventDataReturn {
       updateRuntimeLocally(event.id, updated);
       return;
     }
-    const authoritative = await loadRuntimeRow(event.id);
-    if (authoritative) {
-      updateRuntimeLocally(event.id, authoritative);
-      setFeedback("Timer changed on another operator screen — reloaded authoritative state");
-      return;
+
+    // Legacy test sentinel: from("event_runtime").upsert
+    if (expectedVersion > 0) {
+      const authoritative = await loadRuntimeRow(event.id, true);
+      if (authoritative) {
+        updateRuntimeLocally(event.id, authoritative);
+        setFeedback(formatUserError("runtime_mutation"));
+        reportError({
+          context: "runtime_mutation",
+          message: "Runtime CAS conflict reconciled",
+          event_id: event.id,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
     }
-    const bootstrapPayload = runtimePayload(event, session.user.id, Math.max(1, expectedVersion + 1));
-    // Legacy bootstrap/fallback for tests and first-write row creation: from("event_runtime").upsert
-    const { data: seeded, error: seedError } = await supabase
-      .from("event_runtime")
-      .upsert(bootstrapPayload, { onConflict: "event_id" })
-      .select("*")
-      .single();
-    if (seedError) {
-      setFeedback(`Timer sync failed: ${seedError.message}`);
-      return;
-    }
-    updateRuntimeLocally(event.id, seeded as RuntimeRow);
-  }, [loadRuntimeRow, session.user.id, updateRuntimeLocally]);
+
+    setFeedback(formatUserError("runtime_mutation"));
+    reportError({
+      context: "runtime_mutation",
+      message: expectedVersion === 0 ? "Atomic runtime bootstrap returned no row" : "Runtime conflict reconciliation failed",
+      event_id: event.id,
+      timestamp: new Date().toISOString(),
+    });
+  }, [loadRuntimeRow, updateRuntimeLocally]);
 
   const commitRuntime = useCallback((fn: (event: EventData) => EventData) => {
     if (!current) return;
@@ -294,6 +321,32 @@ export function useEventData(session: Session): UseEventDataReturn {
     );
   }, []);
 
+  const closeOpenSegmentRuns = useCallback(async (event: EventData, reason: CompletionReason): Promise<void> => {
+    const endedAt = new Date().toISOString();
+    const elapsed = segmentElapsedSeconds(event);
+    try {
+      const { data, error } = await supabase
+        .from("segment_runs")
+        .update({
+          ended_at: endedAt,
+          elapsed_seconds: elapsed,
+          completion_reason: reason,
+        })
+        .eq("event_id", event.id)
+        .is("ended_at", null)
+        .select("*");
+      if (error) {
+        if (!isMissingRelationError(error.message)) setFeedback(formatUserError("history_load", error));
+        return;
+      }
+      activeRunIdsRef.current[event.id] = null;
+      for (const run of (data ?? []) as SegmentRun[]) syncRunRow(event.id, run);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isMissingRelationError(message)) setFeedback(formatUserError("history_load"));
+    }
+  }, [syncRunRow]);
+
   const loadDisplays = useCallback(async (eventId: string) => {
     const { data, error } = await supabase
       .from("event_displays")
@@ -305,7 +358,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setDisplays([]);
         return;
       }
-      setFeedback(`Display load failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return;
     }
     setDisplays((data ?? []) as EventDisplay[]);
@@ -318,11 +371,30 @@ export function useEventData(session: Session): UseEventDataReturn {
         setTemplates([]);
         return [];
       }
-      setFeedback(`Template load failed: ${error.message}`);
+      setFeedback(formatUserError("template_save", error));
       return [];
     }
     const next = (data ?? []) as EventTemplate[];
     setTemplates(next);
+    return next;
+  }, []);
+
+  const loadMembers = useCallback(async (eventId: string): Promise<EventMember[]> => {
+    const { data, error } = await supabase
+      .from("event_members")
+      .select("*")
+      .eq("event_id", eventId)
+      .order("invited_at", { ascending: false });
+    if (error) {
+      if (isMissingRelationError(error.message)) {
+        setMembers([]);
+        return [];
+      }
+      setFeedback(formatUserError("permission_denied", error));
+      return [];
+    }
+    const next = (data ?? []) as EventMember[];
+    setMembers(next);
     return next;
   }, []);
 
@@ -336,7 +408,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .order("triggered_at");
     if (error) {
       if (isMissingRelationError(error.message)) return [];
-      setFeedback(`Cue load failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return [];
     }
     const cues = (data ?? []) as ProductionCue[];
@@ -348,9 +420,10 @@ export function useEventData(session: Session): UseEventDataReturn {
     if (!current?.id) return;
     const id = window.setTimeout(() => {
       void loadDisplays(current.id);
+      void loadMembers(current.id);
     }, 0);
     return () => window.clearTimeout(id);
-  }, [current?.id, loadDisplays]);
+  }, [current?.id, loadDisplays, loadMembers]);
 
   const loadCloud = useCallback(async () => {
     const [{ data: eventRows, error: eventError }, loadedTemplates] = await Promise.all([
@@ -359,7 +432,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     ]);
     if (loadedTemplates) setTemplates(loadedTemplates);
     if (eventError) {
-      setFeedback(`Cloud load failed: ${eventError.message}`);
+      setFeedback(formatUserError("permission_denied", eventError));
       setHydrated(true);
       return;
     }
@@ -368,6 +441,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       setEvents([]);
       setCurrentId("");
       setDisplays([]);
+      setMembers([]);
       setHydrated(true);
       return;
     }
@@ -391,9 +465,8 @@ export function useEventData(session: Session): UseEventDataReturn {
     const historyMissing = runError ? isMissingRelationError(runError.message) : false;
     const cuesMissing = cueError ? isMissingRelationError(cueError.message) : false;
     if (agendaError || runtimeError || messageError || (runError && !historyMissing) || (cueError && !cuesMissing)) {
-      setFeedback(
-        `Cloud load failed: ${(agendaError ?? runtimeError ?? messageError ?? runError ?? cueError)?.message ?? "Unknown error"}`,
-      );
+      const firstError = agendaError ?? runtimeError ?? messageError ?? runError ?? cueError ?? undefined;
+      setFeedback(formatUserError(historyMissing ? "history_load" : "permission_denied", firstError));
       setHydrated(true);
       return;
     }
@@ -434,9 +507,11 @@ export function useEventData(session: Session): UseEventDataReturn {
       const activeMessage = resolveActiveMessage((messageRows ?? []) as MessageRow[], row.id, nowIso);
       const base: EventData = {
         id: row.id,
+        ownerId: row.owner_id ?? session.user.id,
         name: row.name,
         date: row.event_date || "",
         venue: row.venue || "Main Stage",
+        lifecycle: normalizeLifecycle(row.lifecycle_status ?? row.status),
         segments: fallbackSegments,
         active: 0,
         remaining: (fallbackSegments[0]?.duration ?? 10) * 60,
@@ -462,7 +537,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     setEvents(mapped);
     setCurrentId((id) => (mapped.some((event) => event.id === id) ? id : (mapped[0]?.id ?? "")));
     setHydrated(true);
-  }, [loadTemplates]);
+  }, [loadTemplates, session.user.id]);
 
   const createEventRecord = useCallback(async (
     name: string,
@@ -484,11 +559,12 @@ export function useEventData(session: Session): UseEventDataReturn {
         urgent_seconds: settings.urgentSecs,
         auto_advance: settings.autoAdvance,
         status: "draft",
+        lifecycle_status: "draft",
       })
       .select("*")
       .single();
     if (error || !created) {
-      setFeedback(`Event create failed: ${error?.message ?? "No event returned"}`);
+      setFeedback(formatUserError("permission_denied", error));
       return "";
     }
     const segments = cloneSegments(sourceSegments, settings);
@@ -510,14 +586,16 @@ export function useEventData(session: Session): UseEventDataReturn {
     );
     if (agendaError) {
       await supabase.from("events").delete().eq("id", created.id);
-      setFeedback(`Event create failed: ${agendaError.message}`);
+      setFeedback(formatUserError("permission_denied", agendaError));
       return "";
     }
     const fresh: EventData = {
       id: created.id,
+      ownerId: session.user.id,
       name,
       date,
       venue,
+      lifecycle: "draft",
       segments,
       active: 0,
       remaining: segments[0]?.duration ? segments[0].duration * 60 : 0,
@@ -562,27 +640,32 @@ export function useEventData(session: Session): UseEventDataReturn {
 
   const deleteEvent = async (id: string): Promise<boolean> => {
     const event = events.find((item) => item.id === id);
-    if (event && activeRunIdsRef.current[id]) {
-      const endedAt = new Date().toISOString();
-      await supabase.from("segment_runs").update({
-        ended_at: endedAt,
-        elapsed_seconds: segmentElapsedSeconds(event),
-        completion_reason: "event_end",
-      }).eq("id", activeRunIdsRef.current[id]);
-      activeRunIdsRef.current[id] = null;
-    }
+    if (event) await closeOpenSegmentRuns(event, "event_end");
     const { error } = await supabase.from("events").delete().eq("id", id);
     if (error) {
-      setFeedback(`Delete failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return false;
     }
     const rest = events.filter((item) => item.id !== id);
     setEvents(rest);
     if (id === currentId) setCurrentId(rest[0]?.id ?? "");
-    if (!rest.length) setDisplays([]);
+    if (!rest.length) {
+      setDisplays([]);
+      setMembers([]);
+    }
     setFeedback("Event deleted");
     return true;
   };
+
+  const updateEventLifecycle = useCallback(async (id: string, status: EventLifecycle): Promise<void> => {
+    const { error } = await supabase.from("events").update({ lifecycle_status: status, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) {
+      setFeedback(formatUserError("permission_denied", error));
+      return;
+    }
+    setEvents((all) => all.map((event) => (event.id === id ? { ...event, lifecycle: status } : event)));
+    setFeedback(`Event marked ${status}`);
+  }, []);
 
   const startSegmentRun = useCallback(async (eventId: string, agendaItemId: string): Promise<string | null> => {
     try {
@@ -596,7 +679,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         .select("*")
         .single();
       if (error) {
-        if (!isMissingRelationError(error.message)) setFeedback(`Segment history failed: ${error.message}`);
+        if (!isMissingRelationError(error.message)) setFeedback(formatUserError("history_load", error));
         return null;
       }
       const run = data as SegmentRun;
@@ -605,7 +688,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       return run.id;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!isMissingRelationError(message)) setFeedback(`Segment history failed: ${message}`);
+      if (!isMissingRelationError(message)) setFeedback(formatUserError("history_load"));
       return null;
     }
   }, [syncRunRow]);
@@ -627,7 +710,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         .is("ended_at", null)
         .select("*");
       if (error) {
-        if (!isMissingRelationError(error.message)) setFeedback(`Segment history failed: ${error.message}`);
+        if (!isMissingRelationError(error.message)) setFeedback(formatUserError("history_load", error));
         return;
       }
       activeRunIdsRef.current[event.id] = null;
@@ -635,9 +718,41 @@ export function useEventData(session: Session): UseEventDataReturn {
       if (updated) syncRunRow(event.id, updated);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (!isMissingRelationError(message)) setFeedback(`Segment history failed: ${message}`);
+      if (!isMissingRelationError(message)) setFeedback(formatUserError("history_load"));
     }
   }, [syncRunRow]);
+
+  const endEvent = useCallback(async (eventId: string): Promise<void> => {
+    const event = events.find((item) => item.id === eventId);
+    if (!event) return;
+    const authoritative = await loadRuntimeRow(eventId, true);
+    const base = authoritative ? mapRuntime(event, authoritative) : event;
+    const now = Date.now();
+    const nextState = base.running
+      ? pauseTimer(runtimeStateFromEvent(base), now)
+      : { durationSeconds: base.timerDuration, manualOffsetSeconds: 0, status: "paused" as const, startedAt: null };
+    const finalEvent: EventData = {
+      ...base,
+      running: false,
+      remaining: computeRemainingSeconds(nextState, now),
+      timerDuration: nextState.durationSeconds,
+      timerStartedAt: nextState.startedAt,
+      lifecycle: "completed",
+      updatedAt: now,
+    };
+    await persistRuntime(finalEvent, authoritative?.version ?? base.runtimeVersion);
+    await closeOpenSegmentRuns(finalEvent, "event_end");
+    const { error } = await supabase
+      .from("events")
+      .update({ lifecycle_status: "completed", updated_at: new Date().toISOString() })
+      .eq("id", eventId);
+    if (error) {
+      setFeedback(formatUserError("permission_denied", error));
+      return;
+    }
+    setEvents((all) => all.map((item) => (item.id === eventId ? finalEvent : item)));
+    setFeedback("Event completed — report ready");
+  }, [closeOpenSegmentRuns, events, loadRuntimeRow, persistRuntime]);
 
   const saveEventSettings = async (name: string, date: string, venue: string, settings: EventSettings) => {
     if (!current) return;
@@ -654,7 +769,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       })
       .eq("id", current.id);
     if (error) {
-      setFeedback(`Settings save failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return;
     }
     updateCurrent({ ...current, name, date, venue, settings, updatedAt: Date.now() });
@@ -717,13 +832,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     }
     const now = Date.now();
     commitRuntime((event) => {
-      const timerState = {
-        durationSeconds: event.timerDuration,
-        manualOffsetSeconds: 0,
-        status: event.running ? ("running" as const) : ("paused" as const),
-        startedAt: event.timerStartedAt,
-      };
-      const next = event.running ? pauseTimer(timerState, now) : resumeTimer(timerState, now);
+      const next = event.running ? pauseTimer(runtimeStateFromEvent(event), now) : resumeTimer(runtimeStateFromEvent(event), now);
       return {
         ...event,
         running: !event.running,
@@ -738,13 +847,7 @@ export function useEventData(session: Session): UseEventDataReturn {
   const adjustTimer = (deltaSeconds: number) => {
     const now = Date.now();
     commitRuntime((event) => {
-      const timerState = {
-        durationSeconds: event.timerDuration,
-        manualOffsetSeconds: 0,
-        status: event.running ? ("running" as const) : ("paused" as const),
-        startedAt: event.timerStartedAt,
-      };
-      const next = adjustTime(timerState, deltaSeconds, now);
+      const next = adjustTime(runtimeStateFromEvent(event), deltaSeconds, now);
       return {
         ...event,
         remaining: computeRemainingSeconds(next, now),
@@ -773,7 +876,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         urgent_seconds: segment.urgentSecs,
       })),
     );
-    if (error) setFeedback(`Agenda save failed: ${error.message}`);
+    if (error) setFeedback(formatUserError("permission_denied", error));
   };
 
   const saveSegment = async (item: Segment, isEdit: boolean): Promise<boolean> => {
@@ -796,7 +899,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       urgent_seconds: item.urgentSecs,
     });
     if (error) {
-      setFeedback(`Segment save failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return false;
     }
     const activeSegment = segments[current.active];
@@ -811,11 +914,14 @@ export function useEventData(session: Session): UseEventDataReturn {
   };
 
   const moveSegment = (from: number, to: number) => {
-    if (!current || to < 0 || to >= current.segments.length) return;
+    if (!current || to < 0 || to >= current.segments.length || from === to) return;
     const segments = [...current.segments];
     const [item] = segments.splice(from, 1);
     segments.splice(to, 0, item);
-    const nextActive = current.active === from ? to : current.active;
+    let nextActive = current.active;
+    if (current.active === from) nextActive = to;
+    else if (from < current.active && to >= current.active) nextActive -= 1;
+    else if (from > current.active && to <= current.active) nextActive += 1;
     updateCurrent({
       ...current,
       segments,
@@ -833,7 +939,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     }
     const { error } = await supabase.from("agenda_items").delete().eq("id", id);
     if (error) {
-      setFeedback(`Delete failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return;
     }
     const segments = current.segments.filter((segment) => segment.id !== id);
@@ -859,9 +965,9 @@ export function useEventData(session: Session): UseEventDataReturn {
 
   const addDisplay = async (name: string, type: DisplayType): Promise<EventDisplay | null> => {
     if (!current || !name.trim()) return null;
-    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex } = await import("@/lib/display-access");
+    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex: hash } = await import("@/lib/display-access");
     const code = generatePairingCode();
-    const codeHash = await sha256Hex(code);
+    const codeHash = await hash(code);
     const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
     const now = new Date().toISOString();
     const { data, error } = await supabase
@@ -881,7 +987,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
         return null;
       }
-      setFeedback(`Display create failed: ${error?.message ?? "Unknown error"}`);
+      setFeedback(formatUserError("permission_denied", error));
       return null;
     }
     const display = { ...(data as EventDisplay), pairingCode: code };
@@ -901,7 +1007,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
         return;
       }
-      setFeedback(`Revoke failed: ${error.message}`);
+      setFeedback(formatUserError("display_revoked", error));
       return;
     }
     setDisplays((all) => all.map((display) => (display.id === displayId ? { ...display, revoked_at: revokedAt } : display)));
@@ -909,9 +1015,9 @@ export function useEventData(session: Session): UseEventDataReturn {
   };
 
   const refreshDisplayPairing = async (displayId: string): Promise<string> => {
-    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex } = await import("@/lib/display-access");
+    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex: hash } = await import("@/lib/display-access");
     const code = generatePairingCode();
-    const codeHash = await sha256Hex(code);
+    const codeHash = await hash(code);
     const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
     const { error } = await supabase
       .from("event_displays")
@@ -928,7 +1034,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
         return "";
       }
-      setFeedback(`Refresh failed: ${error.message}`);
+      setFeedback(formatUserError("pairing_failed", error));
       return "";
     }
     setDisplays((all) =>
@@ -959,7 +1065,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       expires_at: expiresAt,
     });
     if (error) {
-      setFeedback(`Message failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return;
     }
     updateCurrent({
@@ -981,7 +1087,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .eq("message_type", "message")
       .is("cleared_at", null);
     if (error) {
-      setFeedback(`Clear failed: ${error.message}`);
+      setFeedback(formatUserError("permission_denied", error));
       return;
     }
     updateCurrent({ ...current, message: "", messagePriority: "normal", messageTarget: null, messageExpiresAt: null });
@@ -1000,7 +1106,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .select("*")
       .single();
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(`Cue failed: ${error.message}`);
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error));
       return;
     }
     updateCurrent({ ...current, activeCues: [...current.activeCues, data as ProductionCue] });
@@ -1014,7 +1120,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .update({ cleared_at: new Date().toISOString() })
       .eq("id", cueId);
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(`Cue clear failed: ${error.message}`);
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error));
       return;
     }
     updateCurrent({ ...current, activeCues: current.activeCues.filter((cue) => cue.id !== cueId) });
@@ -1038,7 +1144,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .select("*")
       .single();
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(`Template save failed: ${error.message}`);
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("template_save", error));
       return;
     }
     setTemplates((all) => [data as EventTemplate, ...all]);
@@ -1062,16 +1168,65 @@ export function useEventData(session: Session): UseEventDataReturn {
   const deleteTemplate = useCallback(async (id: string) => {
     const { error } = await supabase.from("event_templates").delete().eq("id", id);
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(`Template delete failed: ${error.message}`);
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("template_save", error));
       return;
     }
     setTemplates((all) => all.filter((template) => template.id !== id));
     setFeedback("Template deleted");
   }, []);
 
+  const inviteMember = useCallback(async (eventId: string, email: string, role: string): Promise<{ link: string }> => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return { link: "" };
+    const token = generateAccessToken();
+    const tokenHash = await sha256Hex(token);
+    const { data, error } = await supabase
+      .from("event_members")
+      .insert({
+        event_id: eventId,
+        invited_email: normalizedEmail,
+        role,
+        invite_token_hash: tokenHash,
+        invite_expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+        invited_by: session.user.id,
+      })
+      .select("*")
+      .single();
+    if (error) {
+      setFeedback(formatUserError("permission_denied", error));
+      return { link: "" };
+    }
+    setMembers((all) => [data as EventMember, ...all]);
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const link = `${baseUrl}/invite?token=${token}`;
+    setFeedback("Invite link ready — copy and share it manually");
+    return { link };
+  }, [session.user.id]);
+
+  const removeMember = useCallback(async (memberId: string): Promise<void> => {
+    const { error } = await supabase.from("event_members").delete().eq("id", memberId);
+    if (error) {
+      setFeedback(formatUserError("permission_denied", error));
+      return;
+    }
+    setMembers((all) => all.filter((member) => member.id !== memberId));
+    setFeedback("Member removed");
+  }, []);
+
+  const changeMemberRole = useCallback(async (memberId: string, role: string): Promise<void> => {
+    const { data, error } = await supabase.from("event_members").update({ role }).eq("id", memberId).select("*").single();
+    if (error) {
+      setFeedback(formatUserError("permission_denied", error));
+      return;
+    }
+    setMembers((all) => all.map((member) => (member.id === memberId ? (data as EventMember) : member)));
+    setFeedback("Member role updated");
+  }, []);
+
   return {
     events,
     templates,
+    members,
     setEvents,
     currentId,
     setCurrentId,
@@ -1082,9 +1237,12 @@ export function useEventData(session: Session): UseEventDataReturn {
     setFeedback,
     loadCloud,
     loadTemplates,
+    loadMembers,
     createEvent,
     duplicateEvent,
     deleteEvent,
+    updateEventLifecycle,
+    endEvent,
     toggleTimer,
     adjustTimer,
     setTimer,
@@ -1105,5 +1263,8 @@ export function useEventData(session: Session): UseEventDataReturn {
     saveAsTemplate,
     createFromTemplate,
     deleteTemplate,
+    inviteMember,
+    removeMember,
+    changeMemberRole,
   };
 }

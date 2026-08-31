@@ -1,6 +1,7 @@
 "use client";
 
 import { Download } from "lucide-react";
+import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { exportRundownCSV, exportTimingReportCSV } from "@/lib/csv-export";
 import { actualElapsedSeconds } from "@/lib/segment-history";
 import type { EventData } from "@/lib/types";
@@ -38,6 +39,25 @@ export function EventReport({ event }: EventReportProps) {
     .filter((value): value is number => value !== null)
     .reduce((sum, value) => sum + value, 0);
   const totalVariance = actualTotal ? actualTotal - plannedTotal : null;
+  const chartData = event.segments.map((segment) => {
+    const latestRun = event.segmentRuns
+      .filter((run) => run.agenda_item_id === segment.id && run.ended_at !== null)
+      .sort((left, right) => new Date(left.ended_at ?? 0).getTime() - new Date(right.ended_at ?? 0).getTime())
+      .at(-1);
+    const actual = latestRun ? actualElapsedSeconds(latestRun) : null;
+    const variance = actual === null ? null : actual - segment.duration * 60;
+    return {
+      name: segment.title,
+      planned: segment.duration * 60,
+      actual: actual ?? 0,
+      actualColor: variance === null ? "#8aa097" : variance > 0 ? "#ff5c52" : variance < 0 ? "#1e8a5b" : "#3578e5",
+      hasActual: actual !== null,
+      variance,
+    };
+  });
+  const chartSummary = chartData.length
+    ? `${chartData.filter((item) => item.hasActual).length} of ${chartData.length} segments have recorded timing history.`
+    : "No segment timing history is available yet.";
 
   return (
     <section className="report-panel">
@@ -111,6 +131,34 @@ export function EventReport({ event }: EventReportProps) {
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="report-chart print:hidden" aria-label="Segment timing chart">
+        <div className="report-chart-heading">
+          <strong>Segment timing chart</strong>
+          <p>{chartSummary}</p>
+        </div>
+        <div className="report-chart-frame">
+          <ResponsiveContainer width="100%" height={Math.max(260, chartData.length * 52)}>
+            <BarChart data={chartData} layout="vertical" margin={{ top: 8, right: 20, left: 20, bottom: 8 }}>
+              <XAxis type="number" tickFormatter={(value) => formatMinutes(Number(value))} />
+              <YAxis type="category" dataKey="name" width={140} />
+              <Tooltip
+                formatter={(value: number, name: string, item) => {
+                  if (name === "actual" && !item.payload.hasActual) return ["—", "Actual"];
+                  return [formatMinutes(Number(value)), name === "planned" ? "Planned" : "Actual"];
+                }}
+                labelFormatter={(label) => `Segment: ${label}`}
+              />
+              <Bar dataKey="planned" fill="#c8d0cb" radius={4} />
+              <Bar dataKey="actual" radius={4}>
+                {chartData.map((entry) => (
+                  <Cell key={entry.name} fill={entry.actualColor} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </section>
   );

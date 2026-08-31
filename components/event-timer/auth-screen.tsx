@@ -12,10 +12,16 @@ export const authErrorMessage = (reason: unknown) => {
   return message;
 };
 
+function inviteNotice() {
+  if (typeof window === "undefined") return "";
+  const invite = new URLSearchParams(window.location.search).get("invite");
+  return invite === "accepted" ? "Invite accepted. Sign in to continue to Event Timer." : "";
+}
+
 export function AuthScreen({ initialMode }: { initialMode: AuthMode }) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(inviteNotice);
   const [error, setError] = useState("");
 
   const submit = async (ev: FormEvent<HTMLFormElement>) => {

@@ -36,6 +36,8 @@ export const TIMER_MODES: { value: TimerMode; label: string }[] = [
   { value: "count_up", label: "Count Up" },
 ];
 
+export type EventLifecycle = "draft" | "ready" | "live" | "completed" | "archived";
+
 export interface Segment {
   id: string;
   time: string;
@@ -58,9 +60,11 @@ export interface EventSettings {
 
 export interface EventData {
   id: string;
+  ownerId: string;
   name: string;
   date: string;
   venue: string;
+  lifecycle: EventLifecycle;
   segments: Segment[];
   active: number;
   remaining: number;
@@ -80,7 +84,7 @@ export interface EventData {
 }
 
 export type Connection = "live" | "reconnecting" | "offline";
-export type Screen = "live" | "events" | "displays" | "account" | "settings" | "templates" | "report";
+export type Screen = "live" | "events" | "displays" | "members" | "account" | "settings" | "templates" | "report";
 export type AuthMode = "login" | "signup" | "reset" | "update";
 
 export type MessagePriority = "normal" | "urgent";
@@ -168,6 +172,20 @@ export interface EventDisplay {
   revoked_at: string | null;
   created_at: string;
   pairingCode?: string;
+}
+
+export interface EventMember {
+  id: string;
+  event_id: string;
+  user_id: string | null;
+  role: "owner" | "producer" | "operator" | "viewer";
+  invited_email: string | null;
+  invite_token_hash: string | null;
+  invite_expires_at: string | null;
+  invited_by: string | null;
+  invited_at: string;
+  accepted_at: string | null;
+  created_at: string;
 }
 
 export interface SegmentRun {

@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { notFound } from "next/navigation";
 import { DisplayClient } from "@/components/event-timer/display-client";
 import { getDisplayPermissions, type DisplayType } from "@/lib/display-access";
+import { reportError } from "@/lib/observability";
 import { computeDisplaySeconds } from "@/lib/timer-engine";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +10,10 @@ export const dynamic = "force-dynamic";
 async function getDisplayData(token: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !supabaseKey) return null;
+  if (!supabaseUrl || !supabaseKey) {
+    reportError({ context: "display_token_verify", message: "Missing service role configuration", timestamp: new Date().toISOString() });
+    return null;
+  }
 
   const { sha256Hex } = await import("@/lib/display-access");
   const tokenHash = await sha256Hex(token);
@@ -22,7 +26,10 @@ async function getDisplayData(token: string) {
     .is("revoked_at", null)
     .single();
 
-  if (displayError || !display) return null;
+  if (displayError || !display) {
+    reportError({ context: "display_token_verify", message: "Display token verification failed", timestamp: new Date().toISOString() });
+    return null;
+  }
 
   const permissions = getDisplayPermissions(display.display_type as DisplayType);
 

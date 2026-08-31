@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Fullscreen, Link2, Radio } from "lucide-react";
+import { ArrowRight, CheckCircle2, Fullscreen, Link2, Radio } from "lucide-react";
 import { DEFAULT_THRESHOLDS, getTimerStateName } from "@/lib/timer-engine";
 import {
   formatProjectedFinish,
@@ -19,6 +19,7 @@ import type { Connection, CueType, EventData, Segment } from "@/lib/types";
 interface OperatorConsoleProps {
   event: EventData;
   connection: Connection;
+  operatorCount: number;
   onToggleTimer: () => void;
   onAdjustTimer: (delta: number) => void;
   onSetTimer: (seconds: number, running?: boolean) => void;
@@ -33,11 +34,25 @@ interface OperatorConsoleProps {
   onClearCue: (cueId: string) => Promise<void>;
   onOpenDisplay: () => void;
   onCopyDisplay: () => void;
+  onEndEvent: () => void;
+}
+
+function lifecycleLabel(lifecycle: EventData["lifecycle"]) {
+  return lifecycle === "live"
+    ? "Live"
+    : lifecycle === "ready"
+      ? "Ready"
+      : lifecycle === "completed"
+        ? "Completed"
+        : lifecycle === "archived"
+          ? "Archived"
+          : "Draft";
 }
 
 export function OperatorConsole({
   event,
   connection,
+  operatorCount,
   onToggleTimer,
   onAdjustTimer,
   onSetTimer,
@@ -52,6 +67,7 @@ export function OperatorConsole({
   onClearCue,
   onOpenDisplay,
   onCopyDisplay,
+  onEndEvent,
 }: OperatorConsoleProps) {
   const segment = event.segments[event.active];
   const next = event.segments[event.active + 1];
@@ -93,6 +109,18 @@ export function OperatorConsole({
           <h1>{event.name}</h1>
         </div>
         <div className="heading-actions">
+          {event.lifecycle !== "completed" && (
+            <button
+              className="button secondary"
+              onClick={() => {
+                if (window.confirm("End event? This will stop the timer and mark the event complete. You can review the report afterward.")) {
+                  onEndEvent();
+                }
+              }}
+            >
+              <CheckCircle2 size={16} /> End event
+            </button>
+          )}
           <button className="button secondary" onClick={onOpenDisplay}>
             <Fullscreen size={16} /> Open display
           </button>
@@ -106,6 +134,13 @@ export function OperatorConsole({
         <div>
           <span>STATUS</span>
           <strong className={event.running ? "green" : undefined}>{event.running ? "Running" : "Ready / paused"}</strong>
+          {event.settings.autoAdvance && <small className="status-note">Auto-advance enabled (indicator only in Phase 5)</small>}
+        </div>
+        <div>
+          <span>LIFECYCLE</span>
+          <strong>
+            <span className={`lifecycle-badge lifecycle-${event.lifecycle}`}>{lifecycleLabel(event.lifecycle)}</span>
+          </strong>
         </div>
         <div>
           <span>DATE</span>
@@ -129,11 +164,16 @@ export function OperatorConsole({
         </div>
         <div className="connection-label">
           <span className={connection === "live" ? "pulse" : connection === "reconnecting" ? "reconnecting" : "offline"} />
-          {connection === "live"
-            ? "Realtime connected"
-            : connection === "offline"
-              ? "Offline — state may be stale"
-              : "Reconnecting"}
+          <div>
+            <div>
+              {connection === "live"
+                ? "Realtime connected"
+                : connection === "offline"
+                  ? "Offline — state may be stale"
+                  : "Reconnecting"}
+            </div>
+            {operatorCount > 1 && <small>{operatorCount} operators connected</small>}
+          </div>
         </div>
       </div>
 

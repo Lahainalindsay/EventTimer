@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { CopyPlus, Plus, Trash2 } from "lucide-react";
+import { CopyPlus, Plus, Trash2, Users } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { EventData } from "@/lib/types";
+import type { EventData, EventLifecycle } from "@/lib/types";
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
@@ -25,16 +25,54 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+function lifecycleLabel(lifecycle: EventLifecycle) {
+  return lifecycle === "live"
+    ? "Live"
+    : lifecycle === "ready"
+      ? "Ready"
+      : lifecycle === "completed"
+        ? "Completed"
+        : lifecycle === "archived"
+          ? "Archived"
+          : "Draft";
+}
+
+function nextLifecycle(lifecycle: EventLifecycle): { label: string; value: EventLifecycle } {
+  switch (lifecycle) {
+    case "draft":
+      return { label: "Mark ready", value: "ready" };
+    case "ready":
+      return { label: "Go live", value: "live" };
+    case "live":
+      return { label: "Complete", value: "completed" };
+    case "completed":
+      return { label: "Archive", value: "archived" };
+    case "archived":
+      return { label: "Restore ready", value: "ready" };
+  }
+}
+
 interface EventsViewProps {
   events: EventData[];
   currentId: string;
   onOpen: (id: string) => void;
+  onOpenMembers: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
   onDuplicate: (id: string, newName: string, newDate: string) => Promise<void>;
+  onLifecycleChange: (id: string, status: EventLifecycle) => Promise<void>;
 }
 
-export function EventsView({ events, currentId, onOpen, onCreate, onDelete, onDuplicate }: EventsViewProps) {
+export function EventsView({
+  events,
+  currentId,
+  onOpen,
+  onOpenMembers,
+  onCreate,
+  onDelete,
+  onDuplicate,
+  onLifecycleChange,
+}: EventsViewProps) {
   const [duplicateOpen, setDuplicateOpen] = useState(false);
   const [selected, setSelected] = useState<EventData | null>(null);
 
@@ -65,28 +103,40 @@ export function EventsView({ events, currentId, onOpen, onCreate, onDelete, onDu
       </div>
       {events.length ? (
         <div className="event-list">
-          {events.map((event) => (
-            <article className="event-card" key={event.id}>
-              <div>
-                <span>{event.date}</span>
-                <h2>{event.name}</h2>
-                <p>
-                  {event.venue} · {event.segments.length} segments
-                </p>
-              </div>
-              <div>
-                <button className="button secondary" onClick={() => onOpen(event.id)}>
-                  {event.id === currentId ? "Open current" : "Open event"}
-                </button>
-                <button className="button secondary" onClick={() => openDuplicate(event)}>
-                  <CopyPlus size={16} /> Duplicate
-                </button>
-                <button className="icon-button danger" onClick={() => onDelete(event.id)} aria-label="Delete event">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </article>
-          ))}
+          {events.map((event) => {
+            const transition = nextLifecycle(event.lifecycle);
+            return (
+              <article className="event-card" key={event.id}>
+                <div>
+                  <div className="event-card-meta">
+                    <span>{event.date}</span>
+                    <span className={`lifecycle-badge lifecycle-${event.lifecycle}`}>{lifecycleLabel(event.lifecycle)}</span>
+                  </div>
+                  <h2>{event.name}</h2>
+                  <p>
+                    {event.venue} · {event.segments.length} segments
+                  </p>
+                </div>
+                <div className="event-card-actions">
+                  <button className="button secondary" onClick={() => onOpen(event.id)}>
+                    {event.id === currentId ? "Open current" : "Open event"}
+                  </button>
+                  <button className="button secondary" onClick={() => onOpenMembers(event.id)}>
+                    <Users size={16} /> Members
+                  </button>
+                  <button className="button secondary" onClick={() => void onLifecycleChange(event.id, transition.value)}>
+                    {transition.label}
+                  </button>
+                  <button className="button secondary" onClick={() => openDuplicate(event)}>
+                    <CopyPlus size={16} /> Duplicate
+                  </button>
+                  <button className="icon-button danger" onClick={() => onDelete(event.id)} aria-label="Delete event">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <EmptyState onCreate={onCreate} />

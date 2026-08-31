@@ -296,3 +296,42 @@ describe("canChangeTimerMode", () => {
     assert.equal(canChangeTimerMode(2, 2, false), true);
   });
 });
+
+
+describe('long-run and reconnect', () => {
+  it('countdown is accurate after 2-hour elapsed time', () => {
+    const TWO_HOURS = 2 * 60 * 60 * 1000;
+    const start = 1_700_000_000_000;
+    const state = {
+      durationSeconds: 7200,
+      manualOffsetSeconds: 0,
+      status: 'running',
+      startedAt: new Date(start).toISOString(),
+    };
+    assert.equal(computeRemainingSeconds(state, start + TWO_HOURS), 0);
+  });
+
+  it('reconnect with stale local state uses authoritative timestamps', () => {
+    const serverStart = 1_700_000_000_000;
+    const reconnectAt = serverStart + 30_000;
+    const authoritativeState = {
+      durationSeconds: 600,
+      manualOffsetSeconds: 0,
+      status: 'running',
+      startedAt: new Date(serverStart).toISOString(),
+    };
+    assert.equal(computeRemainingSeconds(authoritativeState, reconnectAt), 570);
+  });
+
+  it('no drift: same result computed at different moments during pause', () => {
+    const state = {
+      durationSeconds: 300,
+      manualOffsetSeconds: 0,
+      status: 'paused',
+      startedAt: null,
+    };
+    const t1 = computeRemainingSeconds(state, 1_000_000);
+    const t2 = computeRemainingSeconds(state, 2_000_000);
+    assert.equal(t1, t2, 'paused timer must not drift');
+  });
+});

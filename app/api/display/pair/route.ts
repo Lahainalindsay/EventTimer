@@ -1,24 +1,27 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { generateAccessToken, sha256Hex } from "@/lib/display-access";
+import { formatUserError } from "@/lib/error-messages";
+import { reportError } from "@/lib/observability";
 
 export async function POST(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.json({ error: "Server configuration error: missing service role" }, { status: 500 });
+    reportError({ context: "pairing_api", message: "Missing service role configuration", timestamp: new Date().toISOString() });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 500 });
   }
 
   let body: { code?: string; event_id?: string };
   try {
     body = (await request.json()) as { code?: string; event_id?: string };
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 400 });
   }
 
   const { code, event_id: eventId } = body;
   if (!code || !/^\d{6}$/.test(code) || !eventId) {
-    return NextResponse.json({ error: "Invalid pairing code or event" }, { status: 400 });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 400 });
   }
 
   const supabase = createClient(supabaseUrl, supabaseKey);
@@ -35,7 +38,8 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (error || !display) {
-    return NextResponse.json({ error: "Invalid, expired, or already-used pairing code" }, { status: 401 });
+    reportError({ context: "pairing_api", message: "Pairing lookup failed", event_id: eventId, timestamp: now });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 401 });
   }
 
   const accessToken = generateAccessToken();
@@ -54,7 +58,8 @@ export async function POST(request: NextRequest) {
     .eq("id", display.id);
 
   if (updateError) {
-    return NextResponse.json({ error: "Failed to issue display token" }, { status: 500 });
+    reportError({ context: "pairing_api", message: "Failed to issue display token", event_id: eventId, display_id: display.id, timestamp: now });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 500 });
   }
 
   return NextResponse.json({

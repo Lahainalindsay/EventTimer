@@ -18,6 +18,7 @@ import { DisplaysView } from "@/components/event-timer/displays-view";
 import { EventReport } from "@/components/event-timer/event-report";
 import { EventSettingsPanel } from "@/components/event-timer/event-settings";
 import { EventsView } from "@/components/event-timer/events-view";
+import { MembersView } from "@/components/event-timer/members-view";
 import { OperatorConsole } from "@/components/event-timer/operator-console";
 import { TemplatesView } from "@/components/event-timer/templates-view";
 import { mapRuntime, useEventData } from "@/hooks/use-event-data";
@@ -76,6 +77,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
   const {
     events,
     templates,
+    members,
     setEvents,
     currentId,
     setCurrentId,
@@ -85,9 +87,12 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     feedback,
     setFeedback,
     loadCloud,
+    loadMembers,
     createEvent,
     duplicateEvent,
     deleteEvent,
+    updateEventLifecycle,
+    endEvent,
     toggleTimer,
     adjustTimer,
     setTimer,
@@ -107,6 +112,9 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     saveAsTemplate,
     createFromTemplate,
     deleteTemplate,
+    inviteMember,
+    removeMember,
+    changeMemberRole,
   } = data;
 
   const onRuntimeUpdate = useCallback((runtime: RuntimeRow) => {
@@ -178,8 +186,9 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     );
   }, [setEvents]);
 
-  const connection = useEventRealtime({
+  const { connection, operatorCount } = useEventRealtime({
     currentId,
+    operatorEmail: session.user.email ?? session.user.id,
     onRuntimeUpdate,
     onMessageInsert,
     onMessageClear,
@@ -195,6 +204,11 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     if (requested) setCurrentId(requested);
     void loadCloud();
   }, [loadCloud, setCurrentId]);
+
+  useEffect(() => {
+    if (!current?.id) return;
+    void loadMembers(current.id);
+  }, [current?.id, loadMembers]);
 
   useEffect(() => {
     if (!current?.running) return;
@@ -264,7 +278,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
         </div>
         <div className="top-actions">
           <span className={`sync ${connection}`}>
-            {connection === "offline" ? <WifiOff size={14} /> : <Wifi size={14} />}{" "}
+            {connection === "offline" ? <WifiOff size={14} /> : <Wifi size={14} />} {" "}
             {connection === "live" ? "Cloud live" : connection === "offline" ? "Offline" : "Reconnecting"}
           </span>
           <button className="avatar" onClick={() => setScreen("account")} title="Account">
@@ -280,6 +294,10 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
         <button className={screen === "events" ? "rail-active" : ""} onClick={() => setScreen("events")}>
           <Clock3 size={20} />
           <span>Events</span>
+        </button>
+        <button className={screen === "members" ? "rail-active" : ""} disabled={!current} onClick={() => setScreen("members")}>
+          <Users size={20} />
+          <span>Members</span>
         </button>
         <button className={screen === "displays" ? "rail-active" : ""} disabled={!current} onClick={() => setScreen("displays")}>
           <Users size={20} />
@@ -323,6 +341,10 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
               setCurrentId(id);
               setScreen("live");
             }}
+            onOpenMembers={(id) => {
+              setCurrentId(id);
+              setScreen("members");
+            }}
             onCreate={() => setCreateOpen(true)}
             onDelete={(id) => void handleDeleteEvent(id)}
             onDuplicate={async (id, newName, newDate) => {
@@ -331,6 +353,18 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
               setCurrentId(createdId);
               setScreen("live");
             }}
+            onLifecycleChange={updateEventLifecycle}
+          />
+        )}
+        {screen === "members" && current && (
+          <MembersView
+            event={current}
+            sessionUserId={session.user.id}
+            members={members}
+            onLoad={loadMembers}
+            onInvite={inviteMember}
+            onRemove={removeMember}
+            onChangeRole={changeMemberRole}
           />
         )}
         {screen === "displays" && current && (
@@ -359,6 +393,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
           <OperatorConsole
             event={current}
             connection={connection}
+            operatorCount={operatorCount}
             onToggleTimer={toggleTimer}
             onAdjustTimer={adjustTimer}
             onSetTimer={setTimer}
@@ -373,6 +408,10 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
             onClearCue={clearCue}
             onOpenDisplay={openDisplay}
             onCopyDisplay={copyDisplay}
+            onEndEvent={async () => {
+              await endEvent(current.id);
+              setScreen("report");
+            }}
           />
         )}
         {screen === "templates" && (

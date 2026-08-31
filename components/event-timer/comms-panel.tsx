@@ -62,7 +62,7 @@ export function CommsPanel({
       </div>
       <div className="presets">
         {PRESETS.map((preset) => (
-          <button key={preset} onClick={() => setDraft(preset)}>
+          <button key={preset} onClick={() => setDraft(preset)} aria-label={`Use preset message ${preset}`}>
             {preset}
           </button>
         ))}
@@ -73,6 +73,7 @@ export function CommsPanel({
           onChange={(e) => setDraft(e.target.value)}
           placeholder="Type a private message…"
           maxLength={80}
+          aria-label="Message to stage"
         />
         <button disabled={!draft.trim()} onClick={() => void send(draft)} aria-label="Send message">
           <Send size={18} />

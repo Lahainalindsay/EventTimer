@@ -1,7 +1,24 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ArrowDown, ArrowUp, Copy, GripVertical, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +43,76 @@ interface RundownPanelProps {
 
 const uid = () => crypto.randomUUID();
 
+interface SortableSegmentRowProps {
+  segment: Segment;
+  index: number;
+  segments: Segment[];
+  activeIndex: number;
+  openEdit: (segment: Segment) => void;
+  onJump: (index: number, run?: boolean) => void;
+  onMove: (from: number, to: number) => void;
+  onDelete: (id: string) => Promise<void>;
+  onDuplicate: (segment: Segment, index: number) => Promise<void>;
+}
+
+function SortableSegmentRow({
+  segment,
+  index,
+  segments,
+  activeIndex,
+  openEdit,
+  onJump,
+  onMove,
+  onDelete,
+  onDuplicate,
+}: SortableSegmentRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: segment.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`run-row ${index === activeIndex ? "active" : ""} ${isDragging ? "dragging" : ""}`}
+    >
+      <button className="row-jump" onClick={() => onJump(index, false)}>
+        <span>{segment.time}</span>
+        <span>
+          <b>{segment.title}</b>
+        </span>
+        <span className="seg-type-badge">
+          {SEGMENT_TYPES.find((type) => type.value === segment.segmentType)?.label ?? segment.segmentType}
+        </span>
+        <span>{segment.person}</span>
+        <span>{segment.duration} min</span>
+      </button>
+      <div className="row-actions">
+        <button className="drag-handle" aria-label="Drag to reorder segment" type="button" {...attributes} {...listeners}>
+          <GripVertical size={14} />
+        </button>
+        <button disabled={index === 0} onClick={() => onMove(index, index - 1)} aria-label="Move up">
+          <ArrowUp size={14} />
+        </button>
+        <button disabled={index === segments.length - 1} onClick={() => onMove(index, index + 1)} aria-label="Move down">
+          <ArrowDown size={14} />
+        </button>
+        <button onClick={() => openEdit(segment)} aria-label="Edit segment">
+          <Pencil size={14} />
+        </button>
+        <button onClick={() => void onDuplicate(segment, index)} aria-label="Duplicate segment">
+          <Copy size={14} />
+        </button>
+        <button disabled={segments.length === 1} onClick={() => void onDelete(segment.id)} aria-label="Delete segment">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function RundownPanel({
   segments,
   activeIndex,
@@ -39,6 +126,12 @@ export function RundownPanel({
   const [editOpen, setEditOpen] = useState(false);
   const [editing, setEditing] = useState<Segment | null>(null);
 
+  const sensors = useSensors(
+    useSensor(MouseSensor),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
   const openAdd = () => {
     setEditing(null);
     setEditOpen(true);
@@ -46,6 +139,14 @@ export function RundownPanel({
   const openEdit = (segment: Segment) => {
     setEditing(segment);
     setEditOpen(true);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = segments.findIndex((segment) => segment.id === active.id);
+    const to = segments.findIndex((segment) => segment.id === over.id);
+    if (from >= 0 && to >= 0) onMove(from, to);
   };
 
   const handleSave = async (ev: FormEvent<HTMLFormElement>) => {
@@ -100,38 +201,24 @@ export function RundownPanel({
         <span>DURATION</span>
         <span>ACTIONS</span>
       </div>
-      {segments.map((segment, index) => (
-        <div className={`run-row ${index === activeIndex ? "active" : ""}`} key={segment.id}>
-          <button className="row-jump" onClick={() => onJump(index, false)}>
-            <span>{segment.time}</span>
-            <span>
-              <b>{segment.title}</b>
-            </span>
-            <span className="seg-type-badge">
-              {SEGMENT_TYPES.find((type) => type.value === segment.segmentType)?.label ?? segment.segmentType}
-            </span>
-            <span>{segment.person}</span>
-            <span>{segment.duration} min</span>
-          </button>
-          <div className="row-actions">
-            <button disabled={index === 0} onClick={() => onMove(index, index - 1)} aria-label="Move up">
-              <ArrowUp size={14} />
-            </button>
-            <button disabled={index === segments.length - 1} onClick={() => onMove(index, index + 1)} aria-label="Move down">
-              <ArrowDown size={14} />
-            </button>
-            <button onClick={() => openEdit(segment)} aria-label="Edit segment">
-              <Pencil size={14} />
-            </button>
-            <button onClick={() => void onDuplicate(segment, index)} aria-label="Duplicate segment">
-              <Copy size={14} />
-            </button>
-            <button disabled={segments.length === 1} onClick={() => void onDelete(segment.id)} aria-label="Delete segment">
-              <Trash2 size={14} />
-            </button>
-          </div>
-        </div>
-      ))}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={segments.map((segment) => segment.id)} strategy={verticalListSortingStrategy}>
+          {segments.map((segment, index) => (
+            <SortableSegmentRow
+              key={segment.id}
+              segment={segment}
+              index={index}
+              segments={segments}
+              activeIndex={activeIndex}
+              openEdit={openEdit}
+              onJump={onJump}
+              onMove={onMove}
+              onDelete={onDelete}
+              onDuplicate={onDuplicate}
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
 
       <Dialog
         open={editOpen}
