@@ -75,8 +75,59 @@ export interface EventData {
 }
 
 export type Connection = "live" | "reconnecting" | "offline";
-export type Screen = "live" | "events" | "displays" | "account" | "settings";
+export type Screen = "live" | "events" | "displays" | "account" | "settings" | "templates" | "report";
 export type AuthMode = "login" | "signup" | "reset" | "update";
+
+export type MessagePriority = "normal" | "urgent";
+export type MessageTarget = "all" | "speaker" | "stage";
+
+export type CueType =
+  | "GO"
+  | "HOLD"
+  | "STANDBY"
+  | "MIC_LIVE"
+  | "VIDEO_READY"
+  | "LIGHTS"
+  | "NEXT_SPEAKER"
+  | "BREAK";
+
+export const CUE_TYPES: { value: CueType; label: string }[] = [
+  { value: "GO", label: "Go" },
+  { value: "HOLD", label: "Hold" },
+  { value: "STANDBY", label: "Standby" },
+  { value: "MIC_LIVE", label: "Mic Live" },
+  { value: "VIDEO_READY", label: "Video Ready" },
+  { value: "LIGHTS", label: "Lights" },
+  { value: "NEXT_SPEAKER", label: "Next Speaker" },
+  { value: "BREAK", label: "Break" },
+];
+
+export interface ProductionCue {
+  id: string;
+  event_id: string;
+  cue_type: CueType;
+  target: string | null;
+  triggered_at: string;
+  cleared_at: string | null;
+  triggered_by: string | null;
+  created_at: string;
+}
+
+export interface EventTemplateData {
+  segments: Segment[];
+  settings: EventSettings;
+  venue: string;
+}
+
+export interface EventTemplate {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  template_data: EventTemplateData;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface RuntimeRow {
   event_id: string;
