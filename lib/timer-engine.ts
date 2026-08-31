@@ -41,14 +41,14 @@ export function isOvertime(remainingSeconds: number): boolean {
 
 export interface PausedTimerState {
   durationSeconds: number;
-  manualOffsetSeconds: 0;
+  manualOffsetSeconds: number;
   status: "paused";
   startedAt: null;
 }
 
 export interface RunningTimerState {
   durationSeconds: number;
-  manualOffsetSeconds: 0;
+  manualOffsetSeconds: number;
   status: "running";
   startedAt: string;
 }
