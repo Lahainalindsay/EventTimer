@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 async function getDisplayData(token: string) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) return null;
 
   const { sha256Hex } = await import("@/lib/display-access");
