@@ -69,9 +69,14 @@ export interface EventData {
   timerMode: TimerMode;
   running: boolean;
   message: string;
+  messagePriority: MessagePriority;
+  messageTarget: string | null;
+  messageExpiresAt: string | null;
   updatedAt: number;
   runtimeVersion: number;
   settings: EventSettings;
+  segmentRuns: SegmentRun[];
+  activeCues: ProductionCue[];
 }
 
 export type Connection = "live" | "reconnecting" | "offline";
@@ -145,7 +150,11 @@ export interface MessageRow {
   event_id?: string;
   body?: string;
   cleared_at?: string | null;
+  created_at?: string;
   message_type?: string;
+  display_target?: string | null;
+  priority?: MessagePriority;
+  expires_at?: string | null;
 }
 
 export interface EventDisplay {

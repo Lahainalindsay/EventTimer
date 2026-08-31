@@ -31,7 +31,7 @@ const {
   PAIRING_CODE_TTL_MS,
 } = displayAccess;
 
-const { shouldAcceptRuntimeUpdate } = runtimeVersion;
+const { applyRuntimeVersionCas, shouldAcceptRuntimeUpdate } = runtimeVersion;
 
 describe("generatePairingCode", () => {
   it("returns exactly 6 digits", () => {
@@ -128,7 +128,7 @@ describe("getDisplayPermissions — speaker", () => {
   it("speaker cannot see next segment", () => assert.equal(perms.nextSegment, false));
   it("speaker receives operator message", () => assert.equal(perms.operatorMessage, true));
   it("speaker cannot see private notes", () => assert.equal(perms.privateNotes, false));
-  it("speaker does not receive cues", () => assert.equal(perms.cues, false));
+  it("speaker receives cues", () => assert.equal(perms.cues, true));
 });
 
 describe("getDisplayPermissions — stage", () => {
@@ -210,6 +210,27 @@ describe("shouldAcceptRuntimeUpdate", () => {
       ),
       true,
     );
+  });
+});
+
+describe("applyRuntimeVersionCas", () => {
+  it("reports success when the expected version matches", () => {
+    assert.deepEqual(applyRuntimeVersionCas(4, 4), { ok: true, version: 5 });
+  });
+
+  it("reports conflict when the expected version is stale", () => {
+    assert.deepEqual(applyRuntimeVersionCas(4, 3), { ok: false, version: 4 });
+  });
+
+  it("supports multi-operator reconcile and retry", () => {
+    const operatorA = applyRuntimeVersionCas(8, 8);
+    assert.deepEqual(operatorA, { ok: true, version: 9 });
+
+    const staleOperatorB = applyRuntimeVersionCas(9, 8);
+    assert.deepEqual(staleOperatorB, { ok: false, version: 9 });
+
+    const retriedOperatorB = applyRuntimeVersionCas(staleOperatorB.version, staleOperatorB.version);
+    assert.deepEqual(retriedOperatorB, { ok: true, version: 10 });
   });
 });
 

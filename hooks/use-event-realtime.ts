@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { HEARTBEAT_INTERVAL_MS } from "@/lib/display-access";
-import type { Connection, MessageRow, RuntimeRow } from "@/lib/types";
+import type { Connection, MessageRow, ProductionCue, RuntimeRow } from "@/lib/types";
 
 interface UseEventRealtimeOptions {
   currentId: string;
   displayToken?: string;
   onRuntimeUpdate: (runtime: RuntimeRow) => void;
-  onMessageInsert: (eventId: string, body: string) => void;
+  onMessageInsert: (eventId: string, message: MessageRow) => void;
   onMessageClear: (eventId: string) => void;
+  onCueUpsert: (eventId: string, cue: ProductionCue) => void;
+  onCueClear: (eventId: string, cueId: string) => void;
 }
 
 export function useEventRealtime({
@@ -19,6 +21,8 @@ export function useEventRealtime({
   onRuntimeUpdate,
   onMessageInsert,
   onMessageClear,
+  onCueUpsert,
+  onCueClear,
 }: UseEventRealtimeOptions): Connection {
   const [connection, setConnection] = useState<Connection>(
     typeof navigator !== "undefined" && navigator.onLine ? "reconnecting" : "offline",
@@ -41,7 +45,7 @@ export function useEventRealtime({
         { event: "INSERT", schema: "public", table: "event_messages", filter: `event_id=eq.${currentId}` },
         (payload) => {
           const message = payload.new as MessageRow;
-          if (message?.body) onMessageInsert(currentId, message.body);
+          if (message?.body) onMessageInsert(currentId, message);
         },
       )
       .on(
@@ -52,13 +56,34 @@ export function useEventRealtime({
           if (message?.cleared_at) onMessageClear(currentId);
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "production_cues", filter: `event_id=eq.${currentId}` },
+        (payload) => {
+          const cue = payload.new as ProductionCue;
+          if (cue?.id) onCueUpsert(currentId, cue);
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "production_cues", filter: `event_id=eq.${currentId}` },
+        (payload) => {
+          const cue = payload.new as ProductionCue;
+          if (!cue?.id) return;
+          if (cue.cleared_at) {
+            onCueClear(currentId, cue.id);
+            return;
+          }
+          onCueUpsert(currentId, cue);
+        },
+      )
       .subscribe((status) =>
         setConnection(status === "SUBSCRIBED" ? "live" : navigator.onLine ? "reconnecting" : "offline"),
       );
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [currentId, onRuntimeUpdate, onMessageInsert, onMessageClear]);
+  }, [currentId, onCueClear, onCueUpsert, onRuntimeUpdate, onMessageClear, onMessageInsert]);
 
   useEffect(() => {
     if (!displayToken) return;

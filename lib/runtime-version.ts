@@ -28,3 +28,19 @@ export function shouldAcceptRuntimeUpdate(
   }
   return false;
 }
+
+export interface RuntimeCasResult {
+  ok: boolean;
+  version: number;
+}
+
+/** Simulate compare-and-swap version advancement for deterministic tests. */
+export function applyRuntimeVersionCas(
+  storedVersion: number,
+  expectedVersion: number,
+): RuntimeCasResult {
+  if (storedVersion !== expectedVersion) {
+    return { ok: false, version: storedVersion };
+  }
+  return { ok: true, version: storedVersion + 1 };
+}

@@ -128,6 +128,34 @@ describe("segment-history", () => {
     assert.equal(projectedFinishWithHistory(segments, 1, 120, [], now), now + (120 + 300) * 1000);
   });
 
+  it("uses actual completed run duration for future segment overruns", () => {
+    const now = 10_000;
+    const segments = [{ id: "a", duration: 15 }, { id: "b", duration: 10 }, { id: "c", duration: 5 }];
+    const runs = [
+      { agenda_item_id: "c", started_at: "2024-01-01T00:00:00Z", ended_at: "2024-01-01T00:07:00Z", elapsed_seconds: 420 },
+    ];
+    assert.equal(projectedFinishWithHistory(segments, 1, 120, runs, now), now + (120 + 420) * 1000);
+  });
+
+  it("uses actual completed run duration for future segment underruns", () => {
+    const now = 10_000;
+    const segments = [{ id: "a", duration: 15 }, { id: "b", duration: 10 }, { id: "c", duration: 5 }];
+    const runs = [
+      { agenda_item_id: "c", started_at: "2024-01-01T00:00:00Z", ended_at: "2024-01-01T00:03:00Z", elapsed_seconds: 180 },
+    ];
+    assert.equal(projectedFinishWithHistory(segments, 1, 120, runs, now), now + (120 + 180) * 1000);
+  });
+
+  it("uses the most recent completed run when multiple actuals exist", () => {
+    const now = 10_000;
+    const segments = [{ id: "a", duration: 15 }, { id: "b", duration: 10 }, { id: "c", duration: 5 }];
+    const runs = [
+      { agenda_item_id: "c", started_at: "2024-01-01T00:00:00Z", ended_at: "2024-01-01T00:04:00Z", elapsed_seconds: 240 },
+      { agenda_item_id: "c", started_at: "2024-01-01T00:10:00Z", ended_at: "2024-01-01T00:16:30Z", elapsed_seconds: 390 },
+    ];
+    assert.equal(projectedFinishWithHistory(segments, 1, 120, runs, now), now + (120 + 390) * 1000);
+  });
+
   it("actualElapsedSeconds returns stored elapsed_seconds when present", () => {
     assert.equal(
       actualElapsedSeconds({

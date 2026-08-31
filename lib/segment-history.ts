@@ -25,12 +25,19 @@ export function projectedFinishWithHistory(
   segments: PlannedSegment[],
   activeIndex: number,
   currentRemainingSeconds: number,
-  _completedRuns: SegmentRun[],
+  completedRuns: SegmentRun[],
   nowMs: number,
 ): number {
   const futureSeconds = segments
     .slice(activeIndex + 1)
-    .reduce((sum, segment) => sum + segment.duration * 60, 0);
+    .reduce((sum, segment) => {
+      const lastRun = completedRuns
+        .filter((run) => run.agenda_item_id === segment.id && run.ended_at !== null)
+        .sort((left, right) => new Date(left.ended_at ?? 0).getTime() - new Date(right.ended_at ?? 0).getTime())
+        .at(-1);
+      const actual = lastRun ? actualElapsedSeconds(lastRun) : null;
+      return sum + (actual ?? segment.duration * 60);
+    }, 0);
   return nowMs + (currentRemainingSeconds + futureSeconds) * 1000;
 }
 

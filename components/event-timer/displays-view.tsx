@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import { Copy, Fullscreen, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -67,11 +68,24 @@ export function DisplaysView({
   const [busy, setBusy] = useState(false);
   const [newDisplay, setNewDisplay] = useState<EventDisplay | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [pairingQrSvg, setPairingQrSvg] = useState("");
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(id);
   }, []);
+
+  const pairingUrl = useMemo(
+    () => (typeof window === "undefined" ? "" : `${window.location.origin}/pair?event=${current.id}`),
+    [current.id],
+  );
+
+  useEffect(() => {
+    if (!newDisplay?.pairingCode || !pairingUrl) return;
+    void QRCode.toString(pairingUrl, { type: "svg", margin: 1, width: 180 })
+      .then(setPairingQrSvg)
+      .catch(() => setPairingQrSvg(""));
+  }, [newDisplay?.pairingCode, pairingUrl]);
 
   const handleAdd = async (ev: FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
@@ -106,6 +120,13 @@ export function DisplaysView({
           <div className="pairing-code" aria-label={`Pairing code: ${newDisplay.pairingCode}`}>
             {newDisplay.pairingCode}
           </div>
+          {pairingQrSvg && (
+            <div
+              className="pairing-qr"
+              aria-label="QR code to pair display — scan to open pairing page"
+              dangerouslySetInnerHTML={{ __html: pairingQrSvg }}
+            />
+          )}
           <p>
             Open <strong>/pair</strong> on the stage monitor and enter this code. Valid for 10 minutes.
           </p>

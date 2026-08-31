@@ -26,7 +26,7 @@ async function getDisplayData(token: string) {
 
   const permissions = getDisplayPermissions(display.display_type as DisplayType);
 
-  const [{ data: runtime }, { data: eventRow }, { data: agendaRows }, { data: messageRows }] = await Promise.all([
+  const [{ data: runtime }, { data: eventRow }, { data: agendaRows }, { data: messageRows }, { data: cueRows }] = await Promise.all([
     supabase.from("event_runtime").select("*").eq("event_id", display.event_id).single(),
     supabase.from("events").select("*").eq("id", display.event_id).single(),
     supabase
@@ -39,8 +39,13 @@ async function getDisplayData(token: string) {
       .select("*")
       .eq("event_id", display.event_id)
       .is("cleared_at", null)
-      .order("created_at", { ascending: false })
-      .limit(1),
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("production_cues")
+      .select("*")
+      .eq("event_id", display.event_id)
+      .is("cleared_at", null)
+      .order("triggered_at"),
   ]);
 
   const segments = agendaRows ?? [];
@@ -56,7 +61,12 @@ async function getDisplayData(token: string) {
     status: (runtime?.timer_status ?? "paused") as "running" | "paused",
     startedAt: runtime?.started_at ?? null,
   };
-  const latestMessage = messageRows?.find((row) => !row.display_target || row.display_target === display.id);
+  const latestMessage = messageRows?.find((row) =>
+    (!row.display_target || row.display_target === "all" || row.display_target === display.display_type || row.display_target === display.id)
+      && (!row.expires_at || row.expires_at > new Date().toISOString())
+      && row.message_type === "message");
+  const activeCues = (cueRows ?? []).filter((cue) =>
+    !cue.target || cue.target === "all" || cue.target === display.display_type || cue.target === display.id);
 
   return {
     displayId: display.id,
@@ -74,6 +84,7 @@ async function getDisplayData(token: string) {
     currentSpeaker: permissions.speaker ? (currentSegment?.speaker ?? "") : "",
     nextTitle: permissions.nextSegment ? (nextSegment?.title ?? "") : "",
     message: permissions.operatorMessage ? (latestMessage?.body ?? "") : "",
+    messagePriority: permissions.operatorMessage ? (latestMessage?.priority ?? "normal") : "normal",
     warningSecs: currentSegment?.warning_seconds ?? eventRow?.warning_seconds ?? 120,
     urgentSecs: currentSegment?.urgent_seconds ?? eventRow?.urgent_seconds ?? 30,
     runtimeVersion: runtime?.version ?? 0,
@@ -84,6 +95,7 @@ async function getDisplayData(token: string) {
       title: segment.title ?? "",
       speaker: segment.speaker ?? "",
     })),
+    activeCues: permissions.cues ? activeCues : [],
     permissions,
   };
 }

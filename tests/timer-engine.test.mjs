@@ -26,6 +26,7 @@ const {
   reset,
   adjustTime,
   formatTime,
+  canChangeTimerMode,
 } = mod;
 
 // ─── countdown calculation ────────────────────────────────────────────────────
@@ -279,5 +280,19 @@ describe("getTimerStateName", () => {
 
   it("uses DEFAULT_THRESHOLDS when not supplied", () => {
     assert.equal(mod.getTimerStateName(mod.DEFAULT_THRESHOLDS.warningSecs, "countdown"), "warning");
+  });
+});
+
+describe("canChangeTimerMode", () => {
+  it("blocks timer mode changes for the active running segment", () => {
+    assert.equal(canChangeTimerMode(2, 2, true), false);
+  });
+
+  it("allows timer mode changes for future segments while running", () => {
+    assert.equal(canChangeTimerMode(3, 2, true), true);
+  });
+
+  it("allows timer mode changes for the active segment when paused", () => {
+    assert.equal(canChangeTimerMode(2, 2, false), true);
   });
 });

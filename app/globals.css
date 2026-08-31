@@ -51,9 +51,53 @@
 /* ── Phase 2: tablet layout (641px–1023px) ─── */
 @media(min-width:641px) and (max-width:1023px){
   .console-grid{grid-template-columns:1fr 320px}
-  .timer-card .timer{font-size:clamp(3rem,9vw,5.5rem)}
+  .timer{font-size:clamp(3rem,9vw,5.5rem)}
   .time-adjust-strip button{min-height:44px}
   .controls .primary-control{min-height:60px}
+}
+
+.status-strip{grid-template-columns:repeat(6,minmax(0,1fr)) 1.3fr}
+.side-stack{display:grid;gap:18px}
+.form-grid.compact{grid-template-columns:1fr 1fr;margin-bottom:10px}
+.stacked-field{display:grid;gap:6px;font-size:11px;font-weight:700}
+.stacked-field select,.dialog-form select{border:1px solid var(--line);border-radius:8px;padding:10px 11px;background:#fff;outline:none}
+.stacked-field select:focus,.dialog-form select:focus{border-color:var(--green);box-shadow:0 0 0 3px #1e8a5b18}
+.sent-preview.urgent{border-left-color:var(--red);background:#fff0ef}
+.sent-preview small{font-size:8px;color:var(--muted)}
+.cue-panel .cue-grid.expanded{grid-template-columns:1fr 1fr}
+.active-cues{border-top:1px solid var(--line);margin-top:14px;padding-top:14px;display:grid;gap:8px}
+.active-cue-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:9px;padding:10px;background:#fafbfa}
+.active-cue-row small,.empty-note,.report-header p{font-size:11px;color:var(--muted);margin:0}
+.active-cue-row button{border:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:10px;font-weight:700}
+.pairing-success,.report-panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:20px}
+.pairing-qr{margin:16px 0;display:inline-flex;padding:12px;border-radius:12px;background:#fff;border:1px solid var(--line)}
+.pairing-qr svg{display:block;height:auto;width:180px}
+.report-panel{display:grid;gap:18px}
+.report-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.report-summary>div{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fafbfa;display:grid;gap:6px}
+.report-summary span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.report-table-wrap{overflow:auto}
+.report-table{width:100%;border-collapse:collapse;background:#fff}
+.report-table th,.report-table td{border:1px solid var(--line);padding:12px;text-align:left;font-size:11px}
+.report-table th{background:#f7f9f7;font-size:10px;text-transform:uppercase;letter-spacing:.08em}
+.print-hidden{display:flex}
+.display-cues{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin:18px 0 10px}
+.display-cue-pill{padding:10px 16px;border-radius:999px;background:#fff;color:#111;font-size:clamp(14px,2vw,22px);font-weight:900;letter-spacing:.08em}
+.display-message.urgent{background:var(--red);color:#fff}
+.display-speaker{position:relative;z-index:1;font-size:clamp(20px,3vw,36px);margin-top:8px;color:#dfe8e1}
+@media(prefers-reduced-motion:reduce){.display-cue-pill{transition:none}}
+@media(max-width:900px){
+  .status-strip{grid-template-columns:1fr 1fr}
+  .status-strip>div:nth-child(3),.status-strip>div:nth-child(4),.status-strip>div:nth-child(5),.status-strip>div:nth-child(6){display:none}
+  .report-summary{grid-template-columns:1fr}
+}
+@media print{
+  html,body{background:#fff;color:#000}
+  .topbar,.rail,.controls,.heading-actions,.display-health,.connection-label,.feedback,.print-hidden,.next-button,.row-actions,.button{display:none!important}
+  .workspace{padding:0}
+  .report-panel{border:0;padding:0}
+  .report-table th,.report-table td{border:1px solid #000}
+  .workspace h1,.report-header h1{color:#000}
 }
 
 /* ── Phase 2: connection stale state ─── */

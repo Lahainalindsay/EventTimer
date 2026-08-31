@@ -10,12 +10,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { TimerMode } from "@/lib/timer-engine";
-import { SEGMENT_TYPES, type Segment, type SegmentType } from "@/lib/types";
+import { canChangeTimerMode, type TimerMode } from "@/lib/timer-engine";
+import { SEGMENT_TYPES, type Segment, type SegmentType, TIMER_MODES } from "@/lib/types";
 
 interface RundownPanelProps {
   segments: Segment[];
   activeIndex: number;
+  isRunning: boolean;
   onJump: (index: number, run?: boolean) => void;
   onMove: (from: number, to: number) => void;
   onSave: (item: Segment, isEdit: boolean) => Promise<boolean>;
@@ -28,6 +29,7 @@ const uid = () => crypto.randomUUID();
 export function RundownPanel({
   segments,
   activeIndex,
+  isRunning,
   onJump,
   onMove,
   onSave,
@@ -70,6 +72,8 @@ export function RundownPanel({
   };
 
   const totalPlanned = segments.reduce((sum, segment) => sum + segment.duration, 0);
+  const editingIndex = editing ? segments.findIndex((segment) => segment.id === editing.id) : -1;
+  const canEditMode = editingIndex < 0 || canChangeTimerMode(editingIndex, activeIndex, isRunning);
 
   return (
     <section className="rundown">
@@ -168,10 +172,19 @@ export function RundownPanel({
             </label>
             <label>
               Timer mode
-              <select name="timerMode" defaultValue={editing?.timerMode ?? "countdown"}>
-                <option value="countdown">Countdown</option>
-                <option value="count_up">Count Up</option>
+              <select
+                name="timerMode"
+                defaultValue={editing?.timerMode ?? "countdown"}
+                disabled={!canEditMode}
+                title={!canEditMode ? "Pause or reset the timer before changing mode" : undefined}
+              >
+                {TIMER_MODES.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
               </select>
+              {!canEditMode && <small>Pause or reset the timer before changing mode</small>}
             </label>
             <label>
               Person / location

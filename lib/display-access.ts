@@ -107,7 +107,7 @@ export function getDisplayPermissions(displayType: DisplayType): DisplayPayloadP
         nextSegment: false,
         operatorMessage: true,
         privateNotes: false,
-        cues: false,
+        cues: true,
         audienceLabel: false,
       };
     case "stage":

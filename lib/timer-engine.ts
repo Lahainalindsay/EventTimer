@@ -155,3 +155,15 @@ export function computeDisplaySeconds(state: TimerState, mode: TimerMode, nowMs:
     ? computeElapsedSeconds(state, nowMs)
     : computeRemainingSeconds(state, nowMs);
 }
+
+/**
+ * Active running segments must be paused or reset before their timer mode can
+ * be changed. Future segments are always safe to edit.
+ */
+export function canChangeTimerMode(
+  segmentIndex: number,
+  activeIndex: number,
+  isRunning: boolean,
+): boolean {
+  return !(isRunning && segmentIndex === activeIndex);
+}

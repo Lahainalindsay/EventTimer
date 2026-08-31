@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AlarmClock, Clock3, Settings2, Sparkles, UserRound, Users, Wifi, WifiOff } from "lucide-react";
+import { AlarmClock, Clock3, FileText, LayoutTemplate, Settings2, Sparkles, UserRound, Users, Wifi, WifiOff } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,15 +15,17 @@ import { AccountView } from "@/components/event-timer/account-view";
 import { AuthScreen } from "@/components/event-timer/auth-screen";
 import { DisplayView } from "@/components/event-timer/display-view";
 import { DisplaysView } from "@/components/event-timer/displays-view";
+import { EventReport } from "@/components/event-timer/event-report";
 import { EventSettingsPanel } from "@/components/event-timer/event-settings";
 import { EventsView } from "@/components/event-timer/events-view";
 import { OperatorConsole } from "@/components/event-timer/operator-console";
+import { TemplatesView } from "@/components/event-timer/templates-view";
 import { mapRuntime, useEventData } from "@/hooks/use-event-data";
 import { useEventRealtime } from "@/hooks/use-event-realtime";
 import { shouldAcceptRuntimeUpdate, type VersionedRuntime } from "@/lib/runtime-version";
 import { computeRemainingSeconds } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
-import type { AuthMode, RuntimeRow, Screen } from "@/lib/types";
+import type { AuthMode, MessageRow, ProductionCue, RuntimeRow, Screen } from "@/lib/types";
 
 // These raw patterns are intentionally preserved for tests/supabase-production.test.mjs:
 // auth.signUp
@@ -73,6 +75,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
   const data = useEventData(session);
   const {
     events,
+    templates,
     setEvents,
     currentId,
     setCurrentId,
@@ -83,6 +86,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     setFeedback,
     loadCloud,
     createEvent,
+    duplicateEvent,
     deleteEvent,
     toggleTimer,
     adjustTimer,
@@ -98,6 +102,11 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     refreshDisplayPairing,
     sendMessage,
     clearMessage,
+    triggerCue,
+    clearCue,
+    saveAsTemplate,
+    createFromTemplate,
+    deleteTemplate,
   } = data;
 
   const onRuntimeUpdate = useCallback((runtime: RuntimeRow) => {
@@ -118,12 +127,55 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     );
   }, [setEvents]);
 
-  const onMessageInsert = useCallback((eventId: string, body: string) => {
-    setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: body } : event)));
+  const onMessageInsert = useCallback((eventId: string, message: MessageRow) => {
+    if (message.message_type !== "message") return;
+    if (message.expires_at && message.expires_at <= new Date().toISOString()) return;
+    setEvents((all) =>
+      all.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              message: message.body ?? "",
+              messagePriority: message.priority ?? "normal",
+              messageTarget: message.display_target ?? null,
+              messageExpiresAt: message.expires_at ?? null,
+            }
+          : event,
+      ),
+    );
   }, [setEvents]);
 
   const onMessageClear = useCallback((eventId: string) => {
-    setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: "" } : event)));
+    setEvents((all) =>
+      all.map((event) =>
+        event.id === eventId
+          ? { ...event, message: "", messagePriority: "normal", messageTarget: null, messageExpiresAt: null }
+          : event,
+      ),
+    );
+  }, [setEvents]);
+
+  const onCueUpsert = useCallback((eventId: string, cue: ProductionCue) => {
+    setEvents((all) =>
+      all.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              activeCues: event.activeCues.some((item) => item.id === cue.id)
+                ? event.activeCues.map((item) => (item.id === cue.id ? cue : item))
+                : [...event.activeCues, cue],
+            }
+          : event,
+      ),
+    );
+  }, [setEvents]);
+
+  const onCueClear = useCallback((eventId: string, cueId: string) => {
+    setEvents((all) =>
+      all.map((event) =>
+        event.id === eventId ? { ...event, activeCues: event.activeCues.filter((cue) => cue.id !== cueId) } : event,
+      ),
+    );
   }, [setEvents]);
 
   const connection = useEventRealtime({
@@ -131,6 +183,8 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     onRuntimeUpdate,
     onMessageInsert,
     onMessageClear,
+    onCueUpsert,
+    onCueClear,
   });
 
   useEffect(() => {
@@ -231,6 +285,14 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
           <Users size={20} />
           <span>Displays</span>
         </button>
+        <button className={screen === "templates" ? "rail-active" : ""} onClick={() => setScreen("templates")}>
+          <LayoutTemplate size={20} />
+          <span>Templates</span>
+        </button>
+        <button className={screen === "report" ? "rail-active" : ""} disabled={!current} onClick={() => setScreen("report")}>
+          <FileText size={20} />
+          <span>Report</span>
+        </button>
         <button className={screen === "settings" ? "rail-active" : ""} disabled={!current} onClick={() => setScreen("settings")}>
           <Settings2 size={20} />
           <span>Settings</span>
@@ -263,6 +325,12 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
             }}
             onCreate={() => setCreateOpen(true)}
             onDelete={(id) => void handleDeleteEvent(id)}
+            onDuplicate={async (id, newName, newDate) => {
+              const createdId = await duplicateEvent(id, newName, newDate);
+              if (!createdId) return;
+              setCurrentId(createdId);
+              setScreen("live");
+            }}
           />
         )}
         {screen === "displays" && current && (
@@ -301,10 +369,27 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
             onDuplicateSegment={duplicateSegment}
             onSendMessage={sendMessage}
             onClearMessage={clearMessage}
+            onTriggerCue={triggerCue}
+            onClearCue={clearCue}
             onOpenDisplay={openDisplay}
             onCopyDisplay={copyDisplay}
           />
         )}
+        {screen === "templates" && (
+          <TemplatesView
+            current={current}
+            templates={templates}
+            onSaveCurrent={saveAsTemplate}
+            onCreateFromTemplate={async (templateId, newName, newDate) => {
+              const createdId = await createFromTemplate(templateId, newName, newDate);
+              if (!createdId) return;
+              setCurrentId(createdId);
+              setScreen("live");
+            }}
+            onDeleteTemplate={deleteTemplate}
+          />
+        )}
+        {screen === "report" && current && <EventReport event={current} />}
       </section>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { HEARTBEAT_INTERVAL_MS, type DisplayPayloadPermissions } from "@/lib/display-access";
 import { shouldAcceptRuntimeUpdate } from "@/lib/runtime-version";
 import { computeDisplaySeconds, formatTime, getTimerStateName } from "@/lib/timer-engine";
-import type { MessageRow, RuntimeRow } from "@/lib/types";
+import type { MessageRow, ProductionCue, RuntimeRow } from "@/lib/types";
 
 interface DisplaySegment {
   id: string;
@@ -32,10 +32,12 @@ interface DisplayClientProps {
     message: string;
     warningSecs: number;
     urgentSecs: number;
+    messagePriority: string;
     runtimeVersion: number;
     runtimeUpdatedAt: string;
     currentAgendaItemId: string | null;
     segments: DisplaySegment[];
+    activeCues: ProductionCue[];
     permissions: DisplayPayloadPermissions;
   };
 }
@@ -50,6 +52,14 @@ function getSegmentView(segments: DisplaySegment[], agendaItemId: string | null)
   };
 }
 
+function matchesDisplayTarget(target: string | null | undefined, displayId: string, displayType: string) {
+  return !target || target === "all" || target === displayId || target === displayType;
+}
+
+function activeCueList(cues: ProductionCue[], displayId: string, displayType: string) {
+  return cues.filter((cue) => matchesDisplayTarget(cue.target, displayId, displayType) && cue.cleared_at === null);
+}
+
 export function DisplayClient({ initialData }: DisplayClientProps) {
   const [state, setState] = useState(() => ({
     displaySeconds: initialData.remaining,
@@ -62,6 +72,8 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
     currentSpeaker: initialData.currentSpeaker,
     nextTitle: initialData.nextTitle,
     message: initialData.message,
+    messagePriority: initialData.messagePriority,
+    activeCues: activeCueList(initialData.activeCues, initialData.displayId, initialData.displayType),
     connected: false,
     runtimeVersion: initialData.runtimeVersion,
     runtimeUpdatedAt: initialData.runtimeUpdatedAt,
@@ -117,8 +129,13 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
         (payload) => {
           const message = payload.new as MessageRow & { display_target?: string | null };
           if (!message?.body) return;
-          if (message.display_target && message.display_target !== initialData.displayId) return;
-          setState((prev) => ({ ...prev, message: message.body ?? "" }));
+          if (!matchesDisplayTarget(message.display_target, initialData.displayId, initialData.displayType)) return;
+          if (message.expires_at && message.expires_at <= new Date().toISOString()) return;
+          setState((prev) => ({
+            ...prev,
+            message: message.body ?? "",
+            messagePriority: message.priority ?? "normal",
+          }));
         },
       )
       .on(
@@ -126,7 +143,30 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
         { event: "UPDATE", schema: "public", table: "event_messages", filter: `event_id=eq.${initialData.eventId}` },
         (payload) => {
           const message = payload.new as MessageRow;
-          if (message?.cleared_at) setState((prev) => ({ ...prev, message: "" }));
+          if (message?.cleared_at) setState((prev) => ({ ...prev, message: "", messagePriority: "normal" }));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "production_cues", filter: `event_id=eq.${initialData.eventId}` },
+        (payload) => {
+          const cue = payload.new as ProductionCue;
+          if (!initialData.permissions.cues || !matchesDisplayTarget(cue.target, initialData.displayId, initialData.displayType)) return;
+          setState((prev) => ({ ...prev, activeCues: activeCueList([...prev.activeCues, cue], initialData.displayId, initialData.displayType) }));
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "production_cues", filter: `event_id=eq.${initialData.eventId}` },
+        (payload) => {
+          const cue = payload.new as ProductionCue;
+          if (!initialData.permissions.cues) return;
+          setState((prev) => {
+            const next = prev.activeCues
+              .filter((item) => item.id !== cue.id)
+              .concat(cue.cleared_at || !matchesDisplayTarget(cue.target, initialData.displayId, initialData.displayType) ? [] : [cue]);
+            return { ...prev, activeCues: activeCueList(next, initialData.displayId, initialData.displayType) };
+          });
         },
       )
       .subscribe((status) => setState((prev) => ({ ...prev, connected: status === "SUBSCRIBED" })));
@@ -134,7 +174,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [initialData.displayId, initialData.eventId, initialData.segments]);
+  }, [initialData.displayId, initialData.displayType, initialData.eventId, initialData.permissions.cues, initialData.segments]);
 
   useEffect(() => {
     if (!state.running) return;
@@ -186,6 +226,15 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
       <div className="display-kicker">
         {state.connected ? "LIVE" : "CONNECTING"} · {initialData.venue.toUpperCase()}
       </div>
+      {initialData.permissions.cues && !!state.activeCues.length && (
+        <div className="display-cues" aria-live="assertive" aria-label="Active production cues">
+          {state.activeCues.map((cue) => (
+            <span key={cue.id} className="display-cue-pill">
+              {cue.cue_type.replaceAll("_", " ")}
+            </span>
+          ))}
+        </div>
+      )}
       {initialData.permissions.segmentTitle && state.currentTitle && <div className="display-title">{state.currentTitle}</div>}
       {initialData.permissions.timer && (
         <div className="display-clock" aria-live="polite">
@@ -194,7 +243,9 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
       )}
       {initialData.permissions.speaker && state.currentSpeaker && <div className="display-speaker">{state.currentSpeaker}</div>}
       {initialData.permissions.nextSegment && state.nextTitle && <div className="display-next">NEXT · {state.nextTitle}</div>}
-      {initialData.permissions.operatorMessage && state.message && <div className="display-message">{state.message}</div>}
+      {initialData.permissions.operatorMessage && state.message && (
+        <div className={`display-message ${state.messagePriority === "urgent" ? "urgent" : ""}`}>{state.message}</div>
+      )}
       <div className="display-status">{viewState.status}</div>
     </main>
   );
