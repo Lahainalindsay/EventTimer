@@ -100,3 +100,58 @@ export function formatTime(seconds: number): string {
   const ss = String(s % 60).padStart(2, "0");
   return `${prefix}${mm}:${ss}`;
 }
+
+export type TimerMode = "countdown" | "count_up";
+
+/** Threshold configuration for timer warning states. */
+export interface ThresholdConfig {
+  warningSecs: number;
+  urgentSecs: number;
+}
+
+/** Default thresholds used when no per-segment config is set. */
+export const DEFAULT_THRESHOLDS: ThresholdConfig = {
+  warningSecs: 120,
+  urgentSecs: 30,
+};
+
+export type TimerStateName = "normal" | "warning" | "urgent" | "overtime";
+
+/**
+ * Determine the named state of the timer for display purposes.
+ * In count_up mode, there are no warning thresholds — always returns "normal".
+ */
+export function getTimerStateName(
+  remaining: number,
+  mode: TimerMode,
+  thresholds: ThresholdConfig = DEFAULT_THRESHOLDS,
+): TimerStateName {
+  if (mode === "count_up") return "normal";
+  if (remaining < 0) return "overtime";
+  if (remaining <= thresholds.urgentSecs) return "urgent";
+  if (remaining <= thresholds.warningSecs) return "warning";
+  return "normal";
+}
+
+/**
+ * Compute elapsed seconds for count_up mode.
+ * durationSeconds stores the accumulated elapsed seconds at the last pause.
+ */
+export function computeElapsedSeconds(state: TimerState, nowMs: number): number {
+  if (state.status === "running" && state.startedAt) {
+    const elapsed = Math.floor((nowMs - new Date(state.startedAt).getTime()) / 1000);
+    return state.durationSeconds + elapsed;
+  }
+  return state.durationSeconds;
+}
+
+/**
+ * Get the display value (seconds) for either mode.
+ * For countdown: remaining seconds (may be negative in overtime).
+ * For count_up: elapsed seconds.
+ */
+export function computeDisplaySeconds(state: TimerState, mode: TimerMode, nowMs: number): number {
+  return mode === "count_up"
+    ? computeElapsedSeconds(state, nowMs)
+    : computeRemainingSeconds(state, nowMs);
+}

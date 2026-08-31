@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test, { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
@@ -16,6 +16,8 @@ after(async () => {
   await vite.close();
 });
 
+const mod = await vite.ssrLoadModule("/lib/timer-engine.ts");
+
 const {
   computeRemainingSeconds,
   isOvertime,
@@ -24,7 +26,7 @@ const {
   reset,
   adjustTime,
   formatTime,
-} = await vite.ssrLoadModule("/lib/timer-engine.ts");
+} = mod;
 
 // ─── countdown calculation ────────────────────────────────────────────────────
 
@@ -207,4 +209,75 @@ test("reset returns a paused state with the given duration", () => {
   assert.equal(result.status, "paused");
   assert.equal(result.durationSeconds, 300);
   assert.equal(result.startedAt, null);
+});
+
+
+// Phase 2: count_up mode tests
+describe("computeElapsedSeconds (count_up)", () => {
+  it("returns durationSeconds when paused", () => {
+    const state = { durationSeconds: 300, manualOffsetSeconds: 0, status: "paused", startedAt: null };
+    assert.equal(mod.computeElapsedSeconds(state, Date.now()), 300);
+  });
+
+  it("accumulates elapsed when running", () => {
+    const start = Date.now();
+    const state = { durationSeconds: 0, manualOffsetSeconds: 0, status: "running", startedAt: new Date(start).toISOString() };
+    const elapsed = mod.computeElapsedSeconds(state, start + 10000);
+    assert.equal(elapsed, 10);
+  });
+
+  it("resumes from paused accumulated value", () => {
+    const start = Date.now();
+    const state = { durationSeconds: 120, manualOffsetSeconds: 0, status: "running", startedAt: new Date(start).toISOString() };
+    const elapsed = mod.computeElapsedSeconds(state, start + 60000);
+    assert.equal(elapsed, 180);
+  });
+});
+
+describe("computeDisplaySeconds", () => {
+  it("delegates to computeRemainingSeconds for countdown mode", () => {
+    const state = { durationSeconds: 600, manualOffsetSeconds: 0, status: "paused", startedAt: null };
+    const display = mod.computeDisplaySeconds(state, "countdown", Date.now());
+    assert.equal(display, mod.computeRemainingSeconds(state, Date.now()));
+  });
+
+  it("delegates to computeElapsedSeconds for count_up mode", () => {
+    const state = { durationSeconds: 300, manualOffsetSeconds: 0, status: "paused", startedAt: null };
+    const display = mod.computeDisplaySeconds(state, "count_up", Date.now());
+    assert.equal(display, 300);
+  });
+});
+
+describe("getTimerStateName", () => {
+  const def = { warningSecs: 120, urgentSecs: 30 };
+
+  it("returns normal when plenty of time remains", () => {
+    assert.equal(mod.getTimerStateName(600, "countdown", def), "normal");
+  });
+
+  it("returns warning at warning threshold", () => {
+    assert.equal(mod.getTimerStateName(120, "countdown", def), "warning");
+  });
+
+  it("returns urgent at urgent threshold", () => {
+    assert.equal(mod.getTimerStateName(30, "countdown", def), "urgent");
+  });
+
+  it("returns urgent at 0 seconds", () => {
+    assert.equal(mod.getTimerStateName(0, "countdown", def), "urgent");
+  });
+
+  it("returns overtime when negative", () => {
+    assert.equal(mod.getTimerStateName(-1, "countdown", def), "overtime");
+  });
+
+  it("returns normal for count_up regardless of value", () => {
+    assert.equal(mod.getTimerStateName(-999, "count_up", def), "normal");
+    assert.equal(mod.getTimerStateName(0, "count_up", def), "normal");
+    assert.equal(mod.getTimerStateName(9999, "count_up", def), "normal");
+  });
+
+  it("uses DEFAULT_THRESHOLDS when not supplied", () => {
+    assert.equal(mod.getTimerStateName(mod.DEFAULT_THRESHOLDS.warningSecs, "countdown"), "warning");
+  });
 });
