@@ -6,12 +6,12 @@ const supabasePublishableKey =
 
 if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error(
-    "Runline cloud configuration is missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.",
+    "Event Timer cloud configuration is missing. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.",
   );
 }
 
 if (supabaseUrl !== "https://tqbppknxhldhtwexwgbo.supabase.co") {
-  throw new Error("Runline is configured for an unexpected Supabase project.");
+  throw new Error("Event Timer is configured for an unexpected Supabase project.");
 }
 
 export const supabase = createClient(supabaseUrl, supabasePublishableKey, {

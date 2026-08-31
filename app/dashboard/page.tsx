@@ -1,5 +1,5 @@
-import RunlineApp from "../event-flow-timer";
+import EventTimerApp from "../event-flow-timer";
 
 export default function Dashboard() {
-  return <RunlineApp />;
+  return <EventTimerApp />;
 }

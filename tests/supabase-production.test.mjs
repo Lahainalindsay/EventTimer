@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 const client = readFileSync("lib/supabase.ts", "utf8");
 const app = readFileSync("app/event-flow-timer.tsx", "utf8");
+const eventDataHook = readFileSync("hooks/use-event-data.ts", "utf8");
 
 test("pins the Runline Production Supabase project", () => {
   assert.match(client, /tqbppknxhldhtwexwgbo\.supabase\.co/);
@@ -21,7 +22,7 @@ test("uses real Supabase authentication operations", () => {
 });
 
 test("persists events and agendas through Supabase", () => {
-  assert.match(app, /from\("events"\)\.insert/);
-  assert.match(app, /from\("agenda_items"\)\.insert/);
-  assert.match(app, /from\("event_runtime"\)\.upsert/);
+  assert.match(eventDataHook, /from\("events"\)\s*\.insert/);
+  assert.match(eventDataHook, /from\("agenda_items"\)\s*\.insert/);
+  assert.match(eventDataHook, /from\("event_runtime"\)\.upsert/);
 });
