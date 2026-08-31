@@ -17,15 +17,19 @@ after(async () => {
 });
 
 const mod = await vite.ssrLoadModule("/lib/schedule-engine.ts");
+const segmentHistory = await vite.ssrLoadModule("/lib/segment-history.ts");
 
 const {
   plannedTotalSeconds,
   plannedRemainingSeconds,
   projectedFinishMs,
+  projectedFinishWithHistory,
   segmentVarianceSeconds,
   formatVarianceLabel,
   formatProjectedFinish,
 } = mod;
+
+const { actualElapsedSeconds } = segmentHistory;
 
 describe("schedule-engine", () => {
   const segments = [{ duration: 15 }, { duration: 10 }, { duration: 25 }];
@@ -114,5 +118,49 @@ describe("schedule-engine", () => {
     const result = formatProjectedFinish(new Date("2024-01-01T14:30:00Z").getTime());
     assert.equal(typeof result, "string");
     assert.ok(result.length > 0);
+  });
+});
+
+describe("segment-history", () => {
+  it("projectedFinishWithHistory matches planned projection when runs are unused", () => {
+    const now = 10_000;
+    const segments = [{ id: "a", duration: 15 }, { id: "b", duration: 10 }, { id: "c", duration: 5 }];
+    assert.equal(projectedFinishWithHistory(segments, 1, 120, [], now), now + (120 + 300) * 1000);
+  });
+
+  it("actualElapsedSeconds returns stored elapsed_seconds when present", () => {
+    assert.equal(
+      actualElapsedSeconds({
+        agenda_item_id: "a",
+        started_at: "2024-01-01T00:00:00Z",
+        ended_at: "2024-01-01T00:00:15Z",
+        elapsed_seconds: 12,
+      }),
+      12,
+    );
+  });
+
+  it("actualElapsedSeconds derives elapsed time from timestamps", () => {
+    assert.equal(
+      actualElapsedSeconds({
+        agenda_item_id: "a",
+        started_at: "2024-01-01T00:00:00Z",
+        ended_at: "2024-01-01T00:00:15Z",
+        elapsed_seconds: null,
+      }),
+      15,
+    );
+  });
+
+  it("actualElapsedSeconds returns null when run has not ended", () => {
+    assert.equal(
+      actualElapsedSeconds({
+        agenda_item_id: "a",
+        started_at: "2024-01-01T00:00:00Z",
+        ended_at: null,
+        elapsed_seconds: null,
+      }),
+      null,
+    );
   });
 });

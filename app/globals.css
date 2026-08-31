@@ -72,3 +72,50 @@
   .display-view.urgent .display-clock{animation:none}
 }
 @keyframes urgent-pulse{0%{opacity:1}50%{opacity:.6}}
+
+
+/* ── Phase 3: pairing code display ─── */
+.pairing-success{border:1px solid var(--green);border-radius:6px;padding:20px;margin-bottom:24px;background:rgba(80,200,80,.06)}
+.pairing-code{font-size:3rem;font-weight:900;letter-spacing:.3em;font-variant-numeric:tabular-nums;text-align:center;padding:16px 0}
+.pairing-code-input{font-size:2rem;font-weight:700;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums}
+
+/* ── Phase 3: display management ─── */
+.display-list{display:flex;flex-direction:column;gap:12px;margin-bottom:24px}
+.display-item{border:1px solid var(--line);border-radius:6px;padding:14px 16px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.display-item-info{display:flex;align-items:center;gap:8px;flex:1;min-width:0;flex-wrap:wrap}
+.display-item-actions{display:flex;gap:8px;align-items:center}
+.display-type-badge{font-size:.65rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border:1px solid var(--line);border-radius:3px;color:var(--muted)}
+.display-status-badge{font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:1px 6px;border-radius:3px}
+.display-status-badge.connected{background:rgba(80,200,80,.15);color:var(--green)}
+.display-status-badge.delayed{background:rgba(255,193,7,.12);color:var(--orange)}
+.display-status-badge.offline,.display-status-badge.never_connected{background:rgba(255,100,100,.1);color:var(--red)}
+.display-status-badge.revoked{background:rgba(120,120,120,.15);color:var(--muted)}
+.heartbeat-age{font-size:.7rem;color:var(--muted);width:100%}
+.empty-displays{padding:32px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:6px;margin-bottom:24px}
+.display-item .button.small{padding:4px 10px;font-size:.75rem;min-height:28px}
+
+/* ── Phase 3: display type radio group ─── */
+.display-type-group{border:1px solid var(--line);border-radius:6px;padding:12px;margin-top:4px}
+.display-type-group legend{font-size:.75rem;font-weight:700;letter-spacing:.07em;color:var(--muted);padding:0 4px}
+.display-type-option{display:flex;align-items:flex-start;gap:10px;padding:8px 0;cursor:pointer}
+.display-type-option input[type=radio]{margin-top:2px;flex-shrink:0}
+.display-type-option div{display:flex;flex-direction:column;gap:2px}
+.display-type-option small{color:var(--muted);font-size:.75rem}
+
+/* ── Phase 3: event settings ─── */
+.settings-panel{max-width:600px}
+.settings-form{display:flex;flex-direction:column;gap:16px;margin-top:24px}
+.settings-form label{display:flex;flex-direction:column;gap:6px;font-size:.8rem;font-weight:600;letter-spacing:.05em}
+.settings-form select{padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:.9rem}
+.toggle-label{flex-direction:row;align-items:flex-start;gap:12px;font-weight:400}
+.toggle-label input[type=checkbox]{margin-top:3px;flex-shrink:0;accent-color:var(--green)}
+.toggle-label span{font-weight:600;font-size:.9rem}
+.toggle-label small{display:block;color:var(--muted);font-size:.75rem;margin-top:2px;font-weight:400}
+.settings-actions{margin-top:8px}
+
+/* ── Phase 3: legacy display card ─── */
+.display-card.legacy{opacity:.75}
+.display-card.legacy:hover{opacity:1}
+
+/* ── Phase 3: public display speaker line ─── */
+.display-speaker{position:relative;z-index:1;font-size:clamp(18px,3vw,30px);opacity:.75;margin-top:8px}

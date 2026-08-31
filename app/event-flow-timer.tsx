@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AlarmClock, Clock3, Settings2, Sparkles, Users, Wifi, WifiOff } from "lucide-react";
+import { AlarmClock, Clock3, Settings2, Sparkles, UserRound, Users, Wifi, WifiOff } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,10 +15,12 @@ import { AccountView } from "@/components/event-timer/account-view";
 import { AuthScreen } from "@/components/event-timer/auth-screen";
 import { DisplayView } from "@/components/event-timer/display-view";
 import { DisplaysView } from "@/components/event-timer/displays-view";
+import { EventSettingsPanel } from "@/components/event-timer/event-settings";
 import { EventsView } from "@/components/event-timer/events-view";
 import { OperatorConsole } from "@/components/event-timer/operator-console";
-import { useEventData, mapRuntime } from "@/hooks/use-event-data";
+import { mapRuntime, useEventData } from "@/hooks/use-event-data";
 import { useEventRealtime } from "@/hooks/use-event-realtime";
+import { shouldAcceptRuntimeUpdate, type VersionedRuntime } from "@/lib/runtime-version";
 import { computeRemainingSeconds } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
 import type { AuthMode, RuntimeRow, Screen } from "@/lib/types";
@@ -59,7 +61,7 @@ export default function EventTimerApp() {
 
   if (!ready) return <main className="loading-state">Connecting…</main>;
   if (!session) return <AuthScreen initialMode={recovery ? "update" : "login" satisfies AuthMode} />;
-  return <EventFlowTimer session={session} accountOnly={location.pathname === "/account"} />;
+  return <EventFlowTimer session={session} accountOnly={typeof location !== "undefined" && location.pathname === "/account"} />;
 }
 
 function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnly: boolean }) {
@@ -75,6 +77,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     currentId,
     setCurrentId,
     current,
+    displays,
     hydrated,
     feedback,
     setFeedback,
@@ -89,30 +92,39 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     moveSegment,
     deleteSegment,
     duplicateSegment,
+    saveEventSettings,
+    addDisplay,
+    revokeDisplay,
+    refreshDisplayPairing,
     sendMessage,
     clearMessage,
   } = data;
 
-  const onRuntimeUpdate = useCallback(
-    (runtime: RuntimeRow) => {
-      setEvents((all) => all.map((event) => (event.id === runtime.event_id ? mapRuntime(event, runtime) : event)));
-    },
-    [setEvents],
-  );
+  const onRuntimeUpdate = useCallback((runtime: RuntimeRow) => {
+    setEvents((all) =>
+      all.map((event) => {
+        if (event.id !== runtime.event_id) return event;
+        const currentRuntime: VersionedRuntime = {
+          version: event.runtimeVersion,
+          updated_at: new Date(event.updatedAt).toISOString(),
+        };
+        const incomingRuntime: VersionedRuntime = {
+          version: runtime.version ?? 0,
+          updated_at: runtime.updated_at,
+        };
+        if (!shouldAcceptRuntimeUpdate(currentRuntime, incomingRuntime)) return event;
+        return mapRuntime(event, runtime);
+      }),
+    );
+  }, [setEvents]);
 
-  const onMessageInsert = useCallback(
-    (eventId: string, body: string) => {
-      setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: body } : event)));
-    },
-    [setEvents],
-  );
+  const onMessageInsert = useCallback((eventId: string, body: string) => {
+    setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: body } : event)));
+  }, [setEvents]);
 
-  const onMessageClear = useCallback(
-    (eventId: string) => {
-      setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: "" } : event)));
-    },
-    [setEvents],
-  );
+  const onMessageClear = useCallback((eventId: string) => {
+    setEvents((all) => all.map((event) => (event.id === eventId ? { ...event, message: "" } : event)));
+  }, [setEvents]);
 
   const connection = useEventRealtime({
     currentId,
@@ -122,9 +134,10 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
   });
 
   useEffect(() => {
-    displayOnly.current = new URLSearchParams(location.search).get("display") === "1";
+    if (typeof window === "undefined") return;
+    displayOnly.current = new URLSearchParams(window.location.search).get("display") === "1";
     setDisplayMode(displayOnly.current);
-    const requested = new URLSearchParams(location.search).get("event");
+    const requested = new URLSearchParams(window.location.search).get("event");
     if (requested) setCurrentId(requested);
     void loadCloud();
   }, [loadCloud, setCurrentId]);
@@ -149,16 +162,16 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
         }),
       );
     }, 500);
-    return () => clearInterval(id);
+    return () => window.clearInterval(id);
   }, [current?.running, currentId, setEvents]);
 
   useEffect(() => {
     if (!feedback) return;
-    const id = setTimeout(() => setFeedback(""), 3000);
-    return () => clearTimeout(id);
+    const id = window.setTimeout(() => setFeedback(""), 3000);
+    return () => window.clearTimeout(id);
   }, [feedback, setFeedback]);
 
-  const displayUrl = () => `${location.origin}/dashboard?display=1&event=${current?.id}`;
+  const displayUrl = () => `${window.location.origin}/dashboard?display=1&event=${current?.id}`;
   const copyDisplay = async () => {
     try {
       await navigator.clipboard.writeText(displayUrl());
@@ -177,7 +190,7 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
   }
 
   const handleDeleteEvent = async (id: string) => {
-    if (!confirm("Delete this event and its run of show? This cannot be undone.")) return;
+    if (!window.confirm("Delete this event and its run of show? This cannot be undone.")) return;
     const ok = await deleteEvent(id);
     if (ok && !events.filter((event) => event.id !== id).length) setScreen("events");
   };
@@ -197,7 +210,8 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
         </div>
         <div className="top-actions">
           <span className={`sync ${connection}`}>
-            {connection === "offline" ? <WifiOff size={14} /> : <Wifi size={14} />} {connection === "live" ? "Cloud live" : connection === "offline" ? "Offline" : "Reconnecting"}
+            {connection === "offline" ? <WifiOff size={14} /> : <Wifi size={14} />}{" "}
+            {connection === "live" ? "Cloud live" : connection === "offline" ? "Offline" : "Reconnecting"}
           </span>
           <button className="avatar" onClick={() => setScreen("account")} title="Account">
             {(session.user.email?.[0] ?? "E").toUpperCase()}
@@ -217,13 +231,17 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
           <Users size={20} />
           <span>Displays</span>
         </button>
+        <button className={screen === "settings" ? "rail-active" : ""} disabled={!current} onClick={() => setScreen("settings")}>
+          <Settings2 size={20} />
+          <span>Settings</span>
+        </button>
         <button disabled title="Import is not available yet">
           <Sparkles size={20} />
           <span>Import soon</span>
         </button>
         <div className="rail-bottom">
           <button className={screen === "account" ? "rail-active" : ""} onClick={() => setScreen("account")}>
-            <Settings2 size={20} />
+            <UserRound size={20} />
             <span>Account</span>
           </button>
         </div>
@@ -247,7 +265,18 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
             onDelete={(id) => void handleDeleteEvent(id)}
           />
         )}
-        {screen === "displays" && current && <DisplaysView current={current} onOpen={openDisplay} onCopy={copyDisplay} />}
+        {screen === "displays" && current && (
+          <DisplaysView
+            current={current}
+            displays={displays}
+            onAdd={addDisplay}
+            onRevoke={revokeDisplay}
+            onRefreshPairing={refreshDisplayPairing}
+            onOpen={openDisplay}
+            onCopy={copyDisplay}
+          />
+        )}
+        {screen === "settings" && current && <EventSettingsPanel event={current} onSave={saveEventSettings} />}
         {screen === "live" && !current && (
           <section className="empty-cloud">
             <p className="eyebrow">EVENT TIMER CLOUD</p>

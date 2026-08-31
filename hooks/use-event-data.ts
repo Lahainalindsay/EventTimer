@@ -1,25 +1,28 @@
 "use client";
 
-import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { Session } from "@supabase/supabase-js";
-import {
-  adjustTime,
-  computeRemainingSeconds,
-  pause as pauseTimer,
-  resume as resumeTimer,
-} from "@/lib/timer-engine";
+import { adjustTime, computeRemainingSeconds, pause as pauseTimer, resume as resumeTimer } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
-import type { EventData, RuntimeRow, Segment } from "@/lib/types";
+import type { DisplayType } from "@/lib/display-access";
+import type { EventData, EventDisplay, EventSettings, RuntimeRow, Segment } from "@/lib/types";
 
 const uid = () => crypto.randomUUID();
-const localTime = (v: string | null) =>
-  v
-    ? new Date(v).toLocaleTimeString([], {
+const localTime = (value: string | null) =>
+  value
+    ? new Date(value).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
       })
     : "09:00";
+
+const defaultSettings = (): EventSettings => ({
+  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  warningSecs: 120,
+  urgentSecs: 30,
+  autoAdvance: false,
+});
 
 const INITIAL_SEGMENTS: Omit<Segment, "id">[] = [
   {
@@ -28,6 +31,7 @@ const INITIAL_SEGMENTS: Omit<Segment, "id">[] = [
     person: "Front of house",
     duration: 15,
     segmentType: "opening",
+    timerMode: "countdown",
     notes: "",
     warningSecs: 120,
     urgentSecs: 30,
@@ -38,6 +42,7 @@ const INITIAL_SEGMENTS: Omit<Segment, "id">[] = [
     person: "Host",
     duration: 10,
     segmentType: "opening",
+    timerMode: "countdown",
     notes: "",
     warningSecs: 120,
     urgentSecs: 30,
@@ -48,15 +53,25 @@ const INITIAL_SEGMENTS: Omit<Segment, "id">[] = [
     person: "Speaker",
     duration: 25,
     segmentType: "keynote",
+    timerMode: "countdown",
     notes: "",
     warningSecs: 120,
     urgentSecs: 30,
   },
 ];
 
+function isMissingRelationError(message: string | undefined) {
+  const text = message?.toLowerCase() ?? "";
+  return text.includes("does not exist") || text.includes("could not find the table") || text.includes("relation");
+}
+
+function currentSegmentTimerMode(event: EventData, activeIndex: number) {
+  return event.segments[activeIndex]?.timerMode ?? "countdown";
+}
+
 export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefined): EventData {
   if (!runtime) return event;
-  const found = event.segments.findIndex((s) => s.id === runtime.current_agenda_item_id);
+  const found = event.segments.findIndex((segment) => segment.id === runtime.current_agenda_item_id);
   const active = found < 0 ? 0 : found;
   const timerState = {
     durationSeconds: runtime.duration_seconds,
@@ -64,17 +79,16 @@ export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefi
     status: runtime.timer_status as "running" | "paused",
     startedAt: runtime.started_at,
   };
-  const remaining = computeRemainingSeconds(timerState, Date.now());
-  const timerMode = runtime.timer_mode === "count_up" ? "count_up" : "countdown";
   return {
     ...event,
     active,
-    remaining,
+    remaining: computeRemainingSeconds(timerState, Date.now()),
     timerDuration: runtime.duration_seconds,
     timerStartedAt: runtime.started_at,
-    timerMode,
+    timerMode: runtime.timer_mode === "count_up" ? "count_up" : currentSegmentTimerMode(event, active),
     running: runtime.timer_status === "running",
     updatedAt: new Date(runtime.updated_at).getTime(),
+    runtimeVersion: runtime.version ?? 0,
   };
 }
 
@@ -84,6 +98,7 @@ export interface UseEventDataReturn {
   currentId: string;
   setCurrentId: Dispatch<SetStateAction<string>>;
   current: EventData | undefined;
+  displays: EventDisplay[];
   hydrated: boolean;
   feedback: string;
   setFeedback: Dispatch<SetStateAction<string>>;
@@ -97,7 +112,11 @@ export interface UseEventDataReturn {
   saveSegment: (item: Segment, isEdit: boolean) => Promise<boolean>;
   moveSegment: (from: number, to: number) => void;
   deleteSegment: (id: string) => Promise<void>;
-  duplicateSegment: (s: Segment, index: number) => Promise<void>;
+  duplicateSegment: (segment: Segment, index: number) => Promise<void>;
+  saveEventSettings: (name: string, date: string, venue: string, settings: EventSettings) => Promise<void>;
+  addDisplay: (name: string, type: DisplayType) => Promise<EventDisplay | null>;
+  revokeDisplay: (displayId: string) => Promise<void>;
+  refreshDisplayPairing: (displayId: string) => Promise<string>;
   sendMessage: (body: string) => Promise<void>;
   clearMessage: () => Promise<void>;
 }
@@ -105,15 +124,17 @@ export interface UseEventDataReturn {
 export function useEventData(session: Session): UseEventDataReturn {
   const [events, setEvents] = useState<EventData[]>([]);
   const [currentId, setCurrentId] = useState("");
+  const [displays, setDisplays] = useState<EventDisplay[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [feedback, setFeedback] = useState("");
 
-  const current = events.find((e) => e.id === currentId) ?? events[0];
+  const current = events.find((event) => event.id === currentId) ?? events[0];
 
-  const updateCurrent = (nextEvent: EventData) =>
-    setEvents((all) => all.map((e) => (e.id === nextEvent.id ? nextEvent : e)));
+  const updateCurrent = useCallback((nextEvent: EventData) => {
+    setEvents((all) => all.map((event) => (event.id === nextEvent.id ? nextEvent : event)));
+  }, []);
 
-  const persistRuntime = async (event: EventData) => {
+  const persistRuntime = useCallback(async (event: EventData) => {
     const active = event.segments[event.active];
     const { error } = await supabase.from("event_runtime").upsert(
       {
@@ -128,24 +149,48 @@ export function useEventData(session: Session): UseEventDataReturn {
         manual_offset_seconds: 0,
         updated_by: session.user.id,
         updated_at: new Date().toISOString(),
+        version: event.runtimeVersion,
       },
       { onConflict: "event_id" },
     );
     if (error) setFeedback(`Timer sync failed: ${error.message}`);
-  };
+  }, [session.user.id]);
 
-  const commitRuntime = (fn: (event: EventData) => EventData) => {
+  const commitRuntime = useCallback((fn: (event: EventData) => EventData) => {
     if (!current) return;
     const changed = fn(current);
-    updateCurrent(changed);
-    void persistRuntime(changed);
-  };
+    const versioned = { ...changed, runtimeVersion: current.runtimeVersion + 1 };
+    updateCurrent(versioned);
+    void persistRuntime(versioned);
+  }, [current, persistRuntime, updateCurrent]);
+
+  const loadDisplays = useCallback(async (eventId: string) => {
+    const { data, error } = await supabase
+      .from("event_displays")
+      .select("id,event_id,name,display_type,pairing_code_expires_at,connected_at,last_heartbeat_at,revoked_at,created_at")
+      .eq("event_id", eventId)
+      .order("created_at");
+    if (error) {
+      if (isMissingRelationError(error.message)) {
+        setDisplays([]);
+        return;
+      }
+      setFeedback(`Display load failed: ${error.message}`);
+      return;
+    }
+    setDisplays((data ?? []) as EventDisplay[]);
+  }, []);
+
+  useEffect(() => {
+    if (!current?.id) return;
+    const id = window.setTimeout(() => {
+      void loadDisplays(current.id);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [current?.id, loadDisplays]);
 
   const loadCloud = useCallback(async () => {
-    const { data: eventRows, error: eventError } = await supabase
-      .from("events")
-      .select("id,name,event_date,venue,updated_at")
-      .order("created_at", { ascending: true });
+    const { data: eventRows, error: eventError } = await supabase.from("events").select("*").order("created_at", { ascending: true });
     if (eventError) {
       setFeedback(`Cloud load failed: ${eventError.message}`);
       setHydrated(true);
@@ -155,14 +200,11 @@ export function useEventData(session: Session): UseEventDataReturn {
     if (!ids.length) {
       setEvents([]);
       setCurrentId("");
+      setDisplays([]);
       setHydrated(true);
       return;
     }
-    const [
-      { data: agendaRows, error: agendaError },
-      { data: runtimeRows, error: runtimeError },
-      { data: messages },
-    ] = await Promise.all([
+    const [{ data: agendaRows, error: agendaError }, { data: runtimeRows, error: runtimeError }, { data: messages }] = await Promise.all([
       supabase.from("agenda_items").select("*").in("event_id", ids).order("position"),
       supabase.from("event_runtime").select("*").in("event_id", ids),
       supabase
@@ -173,11 +215,17 @@ export function useEventData(session: Session): UseEventDataReturn {
         .order("created_at", { ascending: false }),
     ]);
     if (agendaError || runtimeError) {
-      setFeedback(`Cloud load failed: ${(agendaError ?? runtimeError)!.message}`);
+      setFeedback(`Cloud load failed: ${(agendaError ?? runtimeError)?.message ?? "Unknown error"}`);
       setHydrated(true);
       return;
     }
     const mapped = (eventRows ?? []).map((row) => {
+      const eventSettings: EventSettings = {
+        timezone: row.timezone || "UTC",
+        warningSecs: row.warning_seconds ?? 120,
+        urgentSecs: row.urgent_seconds ?? 30,
+        autoAdvance: row.auto_advance ?? false,
+      };
       const segments = (agendaRows ?? [])
         .filter((item) => item.event_id === row.id)
         .map(
@@ -186,27 +234,33 @@ export function useEventData(session: Session): UseEventDataReturn {
             time: localTime(item.scheduled_start),
             title: item.title,
             person: item.speaker || "Unassigned",
-            duration: Math.max(1, Math.round(item.planned_duration_seconds / 60)),
+            duration: Math.max(1, Math.round((item.planned_duration_seconds ?? 600) / 60)),
             segmentType: (item.segment_type as Segment["segmentType"]) || "speaker",
+            timerMode: item.timer_mode === "count_up" ? "count_up" : "countdown",
             notes: item.notes || "",
-            warningSecs: item.warning_seconds ?? 120,
-            urgentSecs: item.urgent_seconds ?? 30,
+            warningSecs: item.warning_seconds ?? eventSettings.warningSecs,
+            urgentSecs: item.urgent_seconds ?? eventSettings.urgentSecs,
           }),
         );
+      const fallbackSegments = segments.length
+        ? segments
+        : INITIAL_SEGMENTS.map((segment) => ({ ...segment, id: uid(), warningSecs: eventSettings.warningSecs, urgentSecs: eventSettings.urgentSecs }));
       const base: EventData = {
         id: row.id,
         name: row.name,
         date: row.event_date || "",
         venue: row.venue || "Main Stage",
-        segments,
+        segments: fallbackSegments,
         active: 0,
-        remaining: (segments[0]?.duration ?? 10) * 60,
-        timerDuration: (segments[0]?.duration ?? 10) * 60,
+        remaining: (fallbackSegments[0]?.duration ?? 10) * 60,
+        timerDuration: (fallbackSegments[0]?.duration ?? 10) * 60,
         timerStartedAt: null,
-        timerMode: "countdown",
+        timerMode: fallbackSegments[0]?.timerMode ?? "countdown",
         running: false,
-        message: (messages ?? []).find((m) => m.event_id === row.id)?.body ?? "",
+        message: (messages ?? []).find((message) => message.event_id === row.id)?.body ?? "",
         updatedAt: new Date(row.updated_at).getTime(),
+        runtimeVersion: 0,
+        settings: eventSettings,
       };
       return mapRuntime(base, (runtimeRows ?? []).find((runtime) => runtime.event_id === row.id));
     });
@@ -216,6 +270,7 @@ export function useEventData(session: Session): UseEventDataReturn {
   }, []);
 
   const createEvent = async (name: string, date: string, venue: string) => {
+    const settings = defaultSettings();
     const { data: created, error } = await supabase
       .from("events")
       .insert({
@@ -223,16 +278,24 @@ export function useEventData(session: Session): UseEventDataReturn {
         name,
         event_date: date,
         venue,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        timezone: settings.timezone,
+        warning_seconds: settings.warningSecs,
+        urgent_seconds: settings.urgentSecs,
+        auto_advance: settings.autoAdvance,
         status: "draft",
       })
-      .select("id,name,event_date,venue,updated_at")
+      .select("*")
       .single();
     if (error || !created) {
       setFeedback(`Event create failed: ${error?.message ?? "No event returned"}`);
       return;
     }
-    const segments = INITIAL_SEGMENTS.map((segment) => ({ ...segment, id: uid() }));
+    const segments = INITIAL_SEGMENTS.map((segment) => ({
+      ...segment,
+      id: uid(),
+      warningSecs: settings.warningSecs,
+      urgentSecs: settings.urgentSecs,
+    }));
     const { error: agendaError } = await supabase.from("agenda_items").insert(
       segments.map((segment, index) => ({
         id: segment.id,
@@ -243,6 +306,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         planned_duration_seconds: segment.duration * 60,
         scheduled_start: `${date}T${segment.time}:00`,
         segment_type: segment.segmentType,
+        timer_mode: segment.timerMode,
         warning_seconds: segment.warningSecs,
         urgent_seconds: segment.urgentSecs,
       })),
@@ -262,10 +326,12 @@ export function useEventData(session: Session): UseEventDataReturn {
       remaining: segments[0].duration * 60,
       timerDuration: segments[0].duration * 60,
       timerStartedAt: null,
-      timerMode: "countdown",
+      timerMode: segments[0].timerMode,
       running: false,
       message: "",
       updatedAt: Date.now(),
+      runtimeVersion: 1,
+      settings,
     };
     setEvents((all) => [...all, fresh]);
     setCurrentId(fresh.id);
@@ -282,8 +348,53 @@ export function useEventData(session: Session): UseEventDataReturn {
     const rest = events.filter((event) => event.id !== id);
     setEvents(rest);
     if (id === currentId) setCurrentId(rest[0]?.id ?? "");
+    if (!rest.length) setDisplays([]);
     setFeedback("Event deleted");
     return true;
+  };
+
+  const recordSegmentEnd = useCallback(async (itemId: string, startedAt: string, reason: string): Promise<void> => {
+    if (!current) return;
+    const endedAt = new Date().toISOString();
+    const elapsed = Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000);
+    try {
+      const { error } = await supabase.from("segment_runs").insert({
+        event_id: current.id,
+        agenda_item_id: itemId,
+        started_at: startedAt,
+        ended_at: endedAt,
+        elapsed_seconds: elapsed,
+        completion_reason: reason,
+      });
+      if (error && !isMissingRelationError(error.message)) {
+        setFeedback(`Segment history failed: ${error.message}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isMissingRelationError(message)) setFeedback(`Segment history failed: ${message}`);
+    }
+  }, [current]);
+
+  const saveEventSettings = async (name: string, date: string, venue: string, settings: EventSettings) => {
+    if (!current) return;
+    const { error } = await supabase
+      .from("events")
+      .update({
+        name,
+        event_date: date,
+        venue,
+        timezone: settings.timezone,
+        warning_seconds: settings.warningSecs,
+        urgent_seconds: settings.urgentSecs,
+        auto_advance: settings.autoAdvance,
+      })
+      .eq("id", current.id);
+    if (error) {
+      setFeedback(`Settings save failed: ${error.message}`);
+      return;
+    }
+    updateCurrent({ ...current, name, date, venue, settings, updatedAt: Date.now() });
+    setFeedback("Settings saved");
   };
 
   const setTimer = (seconds: number, running = current?.running ?? false) => {
@@ -300,14 +411,20 @@ export function useEventData(session: Session): UseEventDataReturn {
 
   const jumpTo = (index: number, run = true) => {
     if (!current?.segments[index]) return;
+    if (current.running && current.timerStartedAt && current.segments[current.active] && index !== current.active) {
+      const reason = index === current.active + 1 ? "next" : index === current.active - 1 ? "previous" : "jump";
+      void recordSegmentEnd(current.segments[current.active].id, current.timerStartedAt, reason);
+    }
     const now = Date.now();
-    const dur = current.segments[index].duration * 60;
+    const duration = current.segments[index].duration * 60;
+    const timerMode = current.segments[index].timerMode;
     commitRuntime((event) => ({
       ...event,
       active: index,
-      remaining: dur,
-      timerDuration: dur,
+      remaining: duration,
+      timerDuration: duration,
       timerStartedAt: run ? new Date(now).toISOString() : null,
+      timerMode,
       running: run,
       updatedAt: now,
     }));
@@ -323,11 +440,10 @@ export function useEventData(session: Session): UseEventDataReturn {
         startedAt: event.timerStartedAt,
       };
       const next = event.running ? pauseTimer(timerState, now) : resumeTimer(timerState, now);
-      const remaining = computeRemainingSeconds(next, now);
       return {
         ...event,
         running: !event.running,
-        remaining,
+        remaining: computeRemainingSeconds(next, now),
         timerDuration: next.durationSeconds,
         timerStartedAt: next.startedAt,
         updatedAt: now,
@@ -345,10 +461,9 @@ export function useEventData(session: Session): UseEventDataReturn {
         startedAt: event.timerStartedAt,
       };
       const next = adjustTime(timerState, deltaSeconds, now);
-      const remaining = computeRemainingSeconds(next, now);
       return {
         ...event,
-        remaining,
+        remaining: computeRemainingSeconds(next, now),
         timerDuration: next.durationSeconds,
         timerStartedAt: next.startedAt,
         updatedAt: now,
@@ -369,6 +484,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         planned_duration_seconds: segment.duration * 60,
         scheduled_start: `${current.date}T${segment.time}:00`,
         segment_type: segment.segmentType,
+        timer_mode: segment.timerMode,
         warning_seconds: segment.warningSecs,
         urgent_seconds: segment.urgentSecs,
       })),
@@ -391,6 +507,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       planned_duration_seconds: item.duration * 60,
       scheduled_start: `${current.date}T${item.time}:00`,
       segment_type: item.segmentType,
+      timer_mode: item.timerMode,
       warning_seconds: item.warningSecs,
       urgent_seconds: item.urgentSecs,
     });
@@ -398,7 +515,13 @@ export function useEventData(session: Session): UseEventDataReturn {
       setFeedback(`Segment save failed: ${error.message}`);
       return false;
     }
-    updateCurrent({ ...current, segments, updatedAt: Date.now() });
+    const activeSegment = segments[current.active];
+    updateCurrent({
+      ...current,
+      segments,
+      timerMode: activeSegment?.timerMode ?? current.timerMode,
+      updatedAt: Date.now(),
+    });
     setFeedback(isEdit ? "Segment saved to cloud" : "Segment added to cloud");
     return true;
   };
@@ -412,6 +535,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       ...current,
       segments,
       active: current.active === from ? to : current.active,
+      timerMode: segments[current.active === from ? to : current.active]?.timerMode ?? current.timerMode,
       updatedAt: Date.now(),
     });
     void savePositions(segments);
@@ -425,10 +549,12 @@ export function useEventData(session: Session): UseEventDataReturn {
       return;
     }
     const segments = current.segments.filter((segment) => segment.id !== id);
+    const active = Math.min(current.active, segments.length - 1);
     updateCurrent({
       ...current,
       segments,
-      active: Math.min(current.active, segments.length - 1),
+      active,
+      timerMode: segments[active]?.timerMode ?? "countdown",
       updatedAt: Date.now(),
     });
     setFeedback("Segment deleted");
@@ -437,14 +563,95 @@ export function useEventData(session: Session): UseEventDataReturn {
   const duplicateSegment = async (segment: Segment, index: number) => {
     if (!current) return;
     const copy: Segment = { ...segment, id: uid(), title: `${segment.title} copy` };
-    const segments = [
-      ...current.segments.slice(0, index + 1),
-      copy,
-      ...current.segments.slice(index + 1),
-    ];
+    const segments = [...current.segments.slice(0, index + 1), copy, ...current.segments.slice(index + 1)];
     updateCurrent({ ...current, segments, updatedAt: Date.now() });
     await savePositions(segments);
     setFeedback("Segment duplicated");
+  };
+
+  const addDisplay = async (name: string, type: DisplayType): Promise<EventDisplay | null> => {
+    if (!current || !name.trim()) return null;
+    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex } = await import("@/lib/display-access");
+    const code = generatePairingCode();
+    const codeHash = await sha256Hex(code);
+    const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from("event_displays")
+      .insert({
+        event_id: current.id,
+        name: name.trim(),
+        display_type: type,
+        pairing_code_hash: codeHash,
+        pairing_code_expires_at: expiresAt,
+        updated_at: now,
+      })
+      .select("id,event_id,name,display_type,pairing_code_expires_at,connected_at,last_heartbeat_at,revoked_at,created_at")
+      .single();
+    if (error || !data) {
+      if (isMissingRelationError(error?.message)) {
+        setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
+        return null;
+      }
+      setFeedback(`Display create failed: ${error?.message ?? "Unknown error"}`);
+      return null;
+    }
+    const display = { ...(data as EventDisplay), pairingCode: code };
+    setDisplays((all) => [...all, display]);
+    setFeedback("Display created");
+    return display;
+  };
+
+  const revokeDisplay = async (displayId: string): Promise<void> => {
+    const revokedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("event_displays")
+      .update({ revoked_at: revokedAt, updated_at: revokedAt })
+      .eq("id", displayId);
+    if (error) {
+      if (isMissingRelationError(error.message)) {
+        setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
+        return;
+      }
+      setFeedback(`Revoke failed: ${error.message}`);
+      return;
+    }
+    setDisplays((all) => all.map((display) => (display.id === displayId ? { ...display, revoked_at: revokedAt } : display)));
+    setFeedback("Display revoked");
+  };
+
+  const refreshDisplayPairing = async (displayId: string): Promise<string> => {
+    const { PAIRING_CODE_TTL_MS, generatePairingCode, sha256Hex } = await import("@/lib/display-access");
+    const code = generatePairingCode();
+    const codeHash = await sha256Hex(code);
+    const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS).toISOString();
+    const { error } = await supabase
+      .from("event_displays")
+      .update({
+        pairing_code_hash: codeHash,
+        pairing_code_expires_at: expiresAt,
+        access_token_hash: null,
+        revoked_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", displayId);
+    if (error) {
+      if (isMissingRelationError(error.message)) {
+        setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
+        return "";
+      }
+      setFeedback(`Refresh failed: ${error.message}`);
+      return "";
+    }
+    setDisplays((all) =>
+      all.map((display) =>
+        display.id === displayId
+          ? { ...display, pairing_code_expires_at: expiresAt, revoked_at: null, pairingCode: code }
+          : display,
+      ),
+    );
+    setFeedback("Pairing code refreshed");
+    return code;
   };
 
   const sendMessage = async (body: string) => {
@@ -456,6 +663,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       body: text,
       priority: "normal",
       created_by: session.user.id,
+      message_type: "message",
     });
     if (error) {
       setFeedback(`Message failed: ${error.message}`);
@@ -485,6 +693,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     currentId,
     setCurrentId,
     current,
+    displays,
     hydrated,
     feedback,
     setFeedback,
@@ -499,6 +708,10 @@ export function useEventData(session: Session): UseEventDataReturn {
     moveSegment,
     deleteSegment,
     duplicateSegment,
+    saveEventSettings,
+    addDisplay,
+    revokeDisplay,
+    refreshDisplayPairing,
     sendMessage,
     clearMessage,
   };

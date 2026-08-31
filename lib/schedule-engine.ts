@@ -5,6 +5,8 @@
  * without React or Supabase.
  */
 
+export { projectedFinishWithHistory } from "./segment-history";
+
 export interface ScheduleSegment {
   /** Planned duration in minutes. */
   duration: number;
@@ -28,10 +30,8 @@ export function plannedRemainingSeconds(
 }
 
 /**
- * Projected finish time in milliseconds.
- *
- * Correctly accounts for actual remaining time on the current segment plus
- * planned durations of all future segments.
+ * Projected finish time in milliseconds using live remaining time for the
+ * current segment plus planned durations for all future segments.
  */
 export function projectedFinishMs(
   segments: ScheduleSegment[],
@@ -54,7 +54,7 @@ export function projectedFinishMs(
  * the operator has shortened this slot).
  *
  * This is only meaningful relative to the planned duration set when the
- * segment was loaded.  It does not require tracking actual wall-clock start
+ * segment was loaded. It does not require tracking actual wall-clock start
  * times.
  */
 export function segmentVarianceSeconds(

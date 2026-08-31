@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { HEARTBEAT_INTERVAL_MS } from "@/lib/display-access";
 import type { Connection, MessageRow, RuntimeRow } from "@/lib/types";
 
 interface UseEventRealtimeOptions {
   currentId: string;
+  displayToken?: string;
   onRuntimeUpdate: (runtime: RuntimeRow) => void;
   onMessageInsert: (eventId: string, body: string) => void;
   onMessageClear: (eventId: string) => void;
@@ -13,6 +15,7 @@ interface UseEventRealtimeOptions {
 
 export function useEventRealtime({
   currentId,
+  displayToken,
   onRuntimeUpdate,
   onMessageInsert,
   onMessageClear,
@@ -56,6 +59,20 @@ export function useEventRealtime({
       void supabase.removeChannel(channel);
     };
   }, [currentId, onRuntimeUpdate, onMessageInsert, onMessageClear]);
+
+  useEffect(() => {
+    if (!displayToken) return;
+    const sendHeartbeat = () => {
+      void fetch("/api/display/heartbeat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: displayToken }),
+      });
+    };
+    sendHeartbeat();
+    const id = window.setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, [displayToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

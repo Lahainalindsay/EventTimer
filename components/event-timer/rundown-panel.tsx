@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { TimerMode } from "@/lib/timer-engine";
 import { SEGMENT_TYPES, type Segment, type SegmentType } from "@/lib/types";
 
 interface RundownPanelProps {
@@ -55,6 +56,7 @@ export function RundownPanel({
       person: String(data.get("person")).trim(),
       duration: Math.max(1, Number(data.get("duration"))),
       segmentType: (String(data.get("segmentType")) || "speaker") as SegmentType,
+      timerMode: (String(data.get("timerMode")) || "countdown") as TimerMode,
       notes: String(data.get("notes") || "").trim(),
       warningSecs: Number(data.get("warningSecs") || 120),
       urgentSecs: Number(data.get("urgentSecs") || 30),
@@ -111,11 +113,7 @@ export function RundownPanel({
             <button disabled={index === 0} onClick={() => onMove(index, index - 1)} aria-label="Move up">
               <ArrowUp size={14} />
             </button>
-            <button
-              disabled={index === segments.length - 1}
-              onClick={() => onMove(index, index + 1)}
-              aria-label="Move down"
-            >
+            <button disabled={index === segments.length - 1} onClick={() => onMove(index, index + 1)} aria-label="Move down">
               <ArrowDown size={14} />
             </button>
             <button onClick={() => openEdit(segment)} aria-label="Edit segment">
@@ -124,11 +122,7 @@ export function RundownPanel({
             <button onClick={() => void onDuplicate(segment, index)} aria-label="Duplicate segment">
               <Copy size={14} />
             </button>
-            <button
-              disabled={segments.length === 1}
-              onClick={() => void onDelete(segment.id)}
-              aria-label="Delete segment"
-            >
+            <button disabled={segments.length === 1} onClick={() => void onDelete(segment.id)} aria-label="Delete segment">
               <Trash2 size={14} />
             </button>
           </div>
@@ -159,14 +153,7 @@ export function RundownPanel({
               </label>
               <label>
                 Duration (minutes)
-                <input
-                  name="duration"
-                  type="number"
-                  min="1"
-                  max="480"
-                  required
-                  defaultValue={editing?.duration ?? 10}
-                />
+                <input name="duration" type="number" min="1" max="480" required defaultValue={editing?.duration ?? 10} />
               </label>
             </div>
             <label>
@@ -177,6 +164,13 @@ export function RundownPanel({
                     {type.label}
                   </option>
                 ))}
+              </select>
+            </label>
+            <label>
+              Timer mode
+              <select name="timerMode" defaultValue={editing?.timerMode ?? "countdown"}>
+                <option value="countdown">Countdown</option>
+                <option value="count_up">Count Up</option>
               </select>
             </label>
             <label>
@@ -192,23 +186,11 @@ export function RundownPanel({
               <div className="form-grid">
                 <label>
                   Warning at (seconds)
-                  <input
-                    name="warningSecs"
-                    type="number"
-                    min="0"
-                    max="3600"
-                    defaultValue={editing?.warningSecs ?? 120}
-                  />
+                  <input name="warningSecs" type="number" min="0" max="3600" defaultValue={editing?.warningSecs ?? 120} />
                 </label>
                 <label>
                   Urgent at (seconds)
-                  <input
-                    name="urgentSecs"
-                    type="number"
-                    min="0"
-                    max="3600"
-                    defaultValue={editing?.urgentSecs ?? 30}
-                  />
+                  <input name="urgentSecs" type="number" min="0" max="3600" defaultValue={editing?.urgentSecs ?? 30} />
                 </label>
               </div>
             </details>
