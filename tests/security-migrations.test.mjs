@@ -59,11 +59,12 @@ test("display clients do not subscribe directly to protected tables", () => {
 
 test("pairing exchange is one-time and server-throttled", () => {
   const route = readFileSync("app/api/display/pair/route.ts", "utf8");
-  assert.match(route, /isPairingThrottledByStore/);
-  assert.match(route, /recordPairingAttemptInStore/);
-  assert.match(route, /\.update\(\{/);
-  assert.match(route, /\.eq\("pairing_code_hash", codeHash\)/);
-  assert.match(route, /pairing_code_hash: null/);
+  assert.match(route, /\.rpc\("pair_display_atomic"/);
+  assert.doesNotMatch(route, /recordPairingAttemptInStore/);
+  const pairingMigration = readFileSync("supabase/migrations/20260901041941_atomic_display_pairing.sql", "utf8");
+  assert.match(pairingMigration, /\.pairing_code_hash = p_pairing_code_hash/);
+  assert.match(pairingMigration, /pairing_code_hash = NULL/);
+  assert.match(pairingMigration, /succeeded, attempted_at\)[\s\S]+true, p_now/);
 });
 
 test("invite acceptance keeps unauthenticated invitations pending", () => {

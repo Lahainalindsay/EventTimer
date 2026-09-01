@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { generateAccessToken, sha256Hex } from "@/lib/display-access";
 import { formatUserError } from "@/lib/error-messages";
 import { reportError } from "@/lib/observability";
-import { isPairingThrottledByStore, recordPairingAttemptInStore } from "@/lib/pairing-rate-limit";
 import { createSupabaseServiceClient } from "@/lib/supabase-server";
 
 function clientAddress(request: NextRequest): string {
@@ -33,54 +32,39 @@ export async function POST(request: NextRequest) {
   }
 
   const rateLimitKey = await sha256Hex(`${clientAddress(request)}:${eventId}`);
-  const rateLimit = await isPairingThrottledByStore(supabase, rateLimitKey);
-  if (!rateLimit.available) {
-    reportError({ context: "pairing_api", message: "Pairing rate-limit store unavailable", timestamp: new Date().toISOString() });
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 503 });
-  }
-  if (rateLimit.throttled) {
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 429 });
-  }
-
   const codeHash = await sha256Hex(code);
   const now = new Date().toISOString();
   const accessToken = generateAccessToken();
   const accessTokenHash = await sha256Hex(accessToken);
 
-  const { data: display, error } = await supabase
-    .from("event_displays")
-    .update({
-      access_token_hash: accessTokenHash,
-      pairing_code_hash: null,
-      pairing_code_expires_at: null,
-      connected_at: now,
-      last_heartbeat_at: now,
-      updated_at: now,
-    })
-    .eq("event_id", eventId)
-    .eq("pairing_code_hash", codeHash)
-    .is("revoked_at", null)
-    .gt("pairing_code_expires_at", now)
-    .select("id,event_id,display_type")
-    .single();
+  const { data, error } = await supabase.rpc("pair_display_atomic", {
+    p_event_id: eventId,
+    p_pairing_code_hash: codeHash,
+    p_access_token_hash: accessTokenHash,
+    p_rate_limit_key: rateLimitKey,
+    p_now: now,
+    p_window_start: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    p_max_failed_attempts: 8,
+  });
 
-  if (error || !display) {
-    if (!(await recordPairingAttemptInStore(supabase, rateLimitKey, eventId, false))) {
-      reportError({ context: "pairing_api", message: "Pairing rate-limit write failed", event_id: eventId, timestamp: now });
-      return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 503 });
-    }
+  if (error) {
+    reportError({ context: "pairing_api", message: "Atomic pairing operation failed", event_id: eventId, timestamp: now });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 503 });
+  }
+
+  const result = (data?.[0] ?? null) as { id: string | null; event_id: string | null; display_type: string | null; throttled: boolean } | null;
+  if (result?.throttled) {
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 429 });
+  }
+  if (!result?.id || !result.event_id || !result.display_type) {
     reportError({ context: "pairing_api", message: "Pairing lookup failed", event_id: eventId, timestamp: now });
     return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 401 });
   }
 
-  if (!(await recordPairingAttemptInStore(supabase, rateLimitKey, eventId, true))) {
-    reportError({ context: "pairing_api", message: "Pairing rate-limit write failed after exchange", event_id: eventId, timestamp: now });
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 503 });
-  }
   return NextResponse.json({
     token: accessToken,
-    display_type: display.display_type,
-    event_id: display.event_id,
+    display_type: result.display_type,
+    event_id: result.event_id,
     display_url: `/display/${accessToken}`,
   });
 }
