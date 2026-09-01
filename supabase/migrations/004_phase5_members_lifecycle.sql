@@ -83,11 +83,13 @@ CREATE TABLE IF NOT EXISTS event_members (
 ALTER TABLE event_members ENABLE ROW LEVEL SECURITY;
 
 -- Event owner can manage members; collaborators can see their own membership
-CREATE POLICY IF NOT EXISTS "event_members_owner_manage" ON event_members
+DROP POLICY IF EXISTS "event_members_owner_manage" ON event_members;
+CREATE POLICY "event_members_owner_manage" ON event_members
   FOR ALL TO authenticated
   USING (event_id IN (SELECT id FROM events WHERE owner_id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS "event_members_self_read" ON event_members
+DROP POLICY IF EXISTS "event_members_self_read" ON event_members;
+CREATE POLICY "event_members_self_read" ON event_members
   FOR SELECT TO authenticated
   USING (user_id = auth.uid());
 

@@ -1,17 +1,17 @@
-import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { generateAccessToken, sha256Hex } from "@/lib/display-access";
 import { formatUserError } from "@/lib/error-messages";
 import { reportError } from "@/lib/observability";
+import { isPairingThrottledByStore, recordPairingAttemptInStore } from "@/lib/pairing-rate-limit";
+import { createSupabaseServiceClient } from "@/lib/supabase-server";
+
+function clientAddress(request: NextRequest): string {
+  return request.headers.get("cf-connecting-ip")
+    ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    ?? "unknown";
+}
 
 export async function POST(request: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    reportError({ context: "pairing_api", message: "Missing service role configuration", timestamp: new Date().toISOString() });
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 500 });
-  }
-
   let body: { code?: string; event_id?: string };
   try {
     body = (await request.json()) as { code?: string; event_id?: string };
@@ -24,28 +24,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 400 });
   }
 
-  const supabase = createClient(supabaseUrl, supabaseKey);
-  const codeHash = await sha256Hex(code);
-  const now = new Date().toISOString();
-
-  const { data: display, error } = await supabase
-    .from("event_displays")
-    .select("id,event_id,display_type,pairing_code_hash,pairing_code_expires_at,revoked_at")
-    .eq("event_id", eventId)
-    .eq("pairing_code_hash", codeHash)
-    .is("revoked_at", null)
-    .gt("pairing_code_expires_at", now)
-    .single();
-
-  if (error || !display) {
-    reportError({ context: "pairing_api", message: "Pairing lookup failed", event_id: eventId, timestamp: now });
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 401 });
+  let supabase;
+  try {
+    supabase = createSupabaseServiceClient();
+  } catch {
+    reportError({ context: "pairing_api", message: "Missing service role configuration", timestamp: new Date().toISOString() });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 500 });
   }
 
+  const rateLimitKey = await sha256Hex(`${clientAddress(request)}:${eventId}`);
+  if (await isPairingThrottledByStore(supabase, rateLimitKey)) {
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 429 });
+  }
+
+  const codeHash = await sha256Hex(code);
+  const now = new Date().toISOString();
   const accessToken = generateAccessToken();
   const accessTokenHash = await sha256Hex(accessToken);
 
-  const { error: updateError } = await supabase
+  const { data: display, error } = await supabase
     .from("event_displays")
     .update({
       access_token_hash: accessTokenHash,
@@ -55,13 +52,20 @@ export async function POST(request: NextRequest) {
       last_heartbeat_at: now,
       updated_at: now,
     })
-    .eq("id", display.id);
+    .eq("event_id", eventId)
+    .eq("pairing_code_hash", codeHash)
+    .is("revoked_at", null)
+    .gt("pairing_code_expires_at", now)
+    .select("id,event_id,display_type")
+    .single();
 
-  if (updateError) {
-    reportError({ context: "pairing_api", message: "Failed to issue display token", event_id: eventId, display_id: display.id, timestamp: now });
-    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 500 });
+  if (error || !display) {
+    await recordPairingAttemptInStore(supabase, rateLimitKey, eventId, false);
+    reportError({ context: "pairing_api", message: "Pairing lookup failed", event_id: eventId, timestamp: now });
+    return NextResponse.json({ error: formatUserError("pairing_failed") }, { status: 401 });
   }
 
+  await recordPairingAttemptInStore(supabase, rateLimitKey, eventId, true);
   return NextResponse.json({
     token: accessToken,
     display_type: display.display_type,
