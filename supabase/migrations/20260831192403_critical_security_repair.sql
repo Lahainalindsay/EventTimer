@@ -56,7 +56,6 @@ $$;
 
 REVOKE ALL ON FUNCTION public.event_timer_role_for(UUID, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.event_timer_can(UUID, TEXT[]) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.event_timer_role_for(UUID, UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.event_timer_can(UUID, TEXT[]) TO authenticated;
 
 -- Private server-side audit table for pairing throttles. No anon/authenticated

@@ -56,7 +56,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
     message: initialData.message,
     messagePriority: initialData.messagePriority,
     activeCues: activeCueList(initialData.activeCues, initialData.displayId, initialData.displayType),
-    connected: false,
+    connectionState: "connecting" as "connecting" | "live" | "offline",
     runtimeVersion: initialData.runtimeVersion,
     runtimeUpdatedAt: initialData.runtimeUpdatedAt,
   }));
@@ -73,7 +73,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
         if (!shouldAcceptRuntimeUpdate(currentRuntime, incomingRuntime)) {
           return {
             ...prev,
-            connected: true,
+            connectionState: "live",
             message: snapshot.message,
             messagePriority: snapshot.messagePriority,
             activeCues: activeCueList(snapshot.activeCues, initialData.displayId, initialData.displayType),
@@ -93,7 +93,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
           message: snapshot.message,
           messagePriority: snapshot.messagePriority,
           activeCues: activeCueList(snapshot.activeCues, initialData.displayId, initialData.displayType),
-          connected: true,
+          connectionState: "live",
           runtimeVersion: snapshot.runtimeVersion,
           runtimeUpdatedAt: snapshot.runtimeUpdatedAt,
         };
@@ -107,16 +107,33 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
         body: JSON.stringify({ token: initialData.token }),
       });
       if (!response.ok) {
-        if (!cancelled) setState((prev) => ({ ...prev, connected: false }));
-        return;
+        return false;
       }
       const snapshot = await response.json() as typeof initialData;
-      if (cancelled) return;
+      if (cancelled) return false;
       applySnapshot(snapshot);
+      return true;
     };
 
     const controller = new AbortController();
+    let reconnectTimer: number | undefined;
+    let reconnectAttempt = 0;
+    let revoked = false;
+
+    const scheduleReconnect = () => {
+      if (cancelled || revoked || reconnectTimer !== undefined) return;
+      setState((prev) => ({ ...prev, connectionState: "offline" }));
+      const delay = Math.min(1000 * (2 ** reconnectAttempt), 10000);
+      reconnectAttempt += 1;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined;
+        if (!cancelled) void connectStream();
+      }, delay);
+    };
+
     const connectStream = async () => {
+      if (cancelled || revoked) return;
+      setState((prev) => ({ ...prev, connectionState: "connecting" }));
       try {
         const response = await fetch("/api/display/stream", {
           method: "POST",
@@ -125,9 +142,16 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
           signal: controller.signal,
         });
         if (!response.ok || !response.body) {
-          await refreshOnce();
+          scheduleReconnect();
           return;
         }
+
+        // Reconcile from the authoritative endpoint before trusting this stream.
+        if (!(await refreshOnce())) {
+          scheduleReconnect();
+          return;
+        }
+        reconnectAttempt = 0;
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -142,17 +166,16 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
             if (!line.trim()) continue;
             const event = JSON.parse(line) as { type: "snapshot"; snapshot: typeof initialData } | { type: "revoked" };
             if (event.type === "revoked") {
-              setState((prev) => ({ ...prev, connected: false }));
+              revoked = true;
+              setState((prev) => ({ ...prev, connectionState: "offline" }));
               return;
             }
             applySnapshot(event.snapshot);
           }
         }
+        if (!cancelled && !revoked) scheduleReconnect();
       } catch {
-        if (!cancelled) {
-          setState((prev) => ({ ...prev, connected: false }));
-          await refreshOnce();
-        }
+        if (!cancelled && !controller.signal.aborted) scheduleReconnect();
       }
     };
 
@@ -160,6 +183,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
     return () => {
       cancelled = true;
       controller.abort();
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
     };
   }, [initialData.displayId, initialData.displayType, initialData.token]);
 
@@ -211,7 +235,7 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
   return (
     <main className={`display-view ${viewState.bodyClass}`}>
       <div className="display-kicker">
-        {state.connected ? "LIVE" : "CONNECTING"} · {initialData.venue.toUpperCase()}
+        {state.connectionState.toUpperCase()} · {initialData.venue.toUpperCase()}
       </div>
       {initialData.permissions.cues && !!state.activeCues.length && (
         <div className="display-cues" aria-live="assertive" aria-label="Active production cues">

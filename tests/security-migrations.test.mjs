@@ -20,6 +20,9 @@ test("runtime RPC explicitly authorizes owner, producer, and operator but not vi
   assert.match(repair, /RAISE EXCEPTION 'not authorized to mutate event runtime'/);
   assert.match(repair, /GRANT EXECUTE ON FUNCTION public\.upsert_runtime_atomic\(UUID,BIGINT,TEXT,INT,INT,TEXT,TIMESTAMPTZ,UUID\) TO authenticated/);
   assert.doesNotMatch(repair, /GRANT EXECUTE ON FUNCTION public\.upsert_runtime_atomic[\s\S]+ TO anon/i);
+  assert.match(repair, /REVOKE ALL ON FUNCTION public\.event_timer_role_for\(UUID, UUID\) FROM PUBLIC/);
+  assert.doesNotMatch(repair, /GRANT EXECUTE ON FUNCTION public\.event_timer_role_for\(UUID, UUID\) TO authenticated/);
+  assert.match(repair, /event_timer_role_for\(p_event_id, \(SELECT auth\.uid\(\)\)\)/);
 });
 
 test("runtime bootstrap and mutation keep database-side CAS semantics", () => {
