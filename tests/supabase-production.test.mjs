@@ -6,10 +6,13 @@ const client = readFileSync("lib/supabase.ts", "utf8");
 const app = readFileSync("app/event-flow-timer.tsx", "utf8");
 const eventDataHook = readFileSync("hooks/use-event-data.ts", "utf8");
 
-test("pins the Runline Production Supabase project", () => {
-  assert.match(client, /tqbppknxhldhtwexwgbo\.supabase\.co/);
+test("requires explicit Event Timer Supabase project refs", () => {
+  assert.match(client, /NEXT_PUBLIC_SUPABASE_PRODUCTION_REF/);
+  assert.match(client, /NEXT_PUBLIC_SUPABASE_STAGING_REF/);
+  assert.match(client, /NEXT_PUBLIC_SUPABASE_TEST_REF/);
   assert.match(client, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
   assert.doesNotMatch(client, /service_role/i);
+  assert.doesNotMatch(client, /R.NLINE/i);
 });
 
 test("uses real Supabase authentication operations", () => {
@@ -24,5 +27,5 @@ test("uses real Supabase authentication operations", () => {
 test("persists events and agendas through Supabase", () => {
   assert.match(eventDataHook, /from\("events"\)\s*\.insert/);
   assert.match(eventDataHook, /from\("agenda_items"\)\s*\.insert/);
-  assert.match(eventDataHook, /from\("event_runtime"\)\.upsert/);
+  assert.match(eventDataHook, /rpc\("upsert_runtime_atomic"/);
 });

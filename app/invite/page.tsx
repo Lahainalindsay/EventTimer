@@ -35,8 +35,15 @@ export default function InvitePage() {
         return;
       }
 
-      setMessage("Invite accepted. Redirecting to sign in…");
-      window.location.replace(data.session ? "/dashboard?invite=accepted" : "/?invite=accepted");
+      const result = await res.json() as { requires_login?: boolean };
+      if (result.requires_login) {
+        setMessage("Sign in to accept this invite.");
+        window.location.replace(`/?invite=pending&token=${encodeURIComponent(token)}`);
+        return;
+      }
+
+      setMessage("Invite accepted. Redirecting…");
+      window.location.replace("/dashboard?invite=accepted");
     };
 
     void run();

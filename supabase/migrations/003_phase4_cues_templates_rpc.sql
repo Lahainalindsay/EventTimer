@@ -69,7 +69,8 @@ COMMENT ON TABLE production_cues IS 'Deterministic stage-management signals (GO,
 
 ALTER TABLE production_cues ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "production_cues_owner_all" ON production_cues
+DROP POLICY IF EXISTS "production_cues_owner_all" ON production_cues;
+CREATE POLICY "production_cues_owner_all" ON production_cues
   FOR ALL TO authenticated
   USING (event_id IN (SELECT id FROM events WHERE owner_id = auth.uid()));
 
@@ -90,7 +91,8 @@ COMMENT ON TABLE event_templates IS 'Reusable run-of-show templates. template_da
 
 ALTER TABLE event_templates ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "event_templates_owner_all" ON event_templates
+DROP POLICY IF EXISTS "event_templates_owner_all" ON event_templates;
+CREATE POLICY "event_templates_owner_all" ON event_templates
   FOR ALL TO authenticated USING (owner_id = auth.uid());
 
 -- ────────────────────────────────────────────────

@@ -1,17 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { HEARTBEAT_INTERVAL_MS, type DisplayPayloadPermissions } from "@/lib/display-access";
 import { shouldAcceptRuntimeUpdate } from "@/lib/runtime-version";
 import { computeDisplaySeconds, formatTime, getTimerStateName } from "@/lib/timer-engine";
-import type { MessageRow, ProductionCue, RuntimeRow } from "@/lib/types";
-
-interface DisplaySegment {
-  id: string;
-  title: string;
-  speaker: string;
-}
+import type { ProductionCue } from "@/lib/types";
 
 interface DisplayClientProps {
   initialData: {
@@ -36,19 +29,8 @@ interface DisplayClientProps {
     runtimeVersion: number;
     runtimeUpdatedAt: string;
     currentAgendaItemId: string | null;
-    segments: DisplaySegment[];
     activeCues: ProductionCue[];
     permissions: DisplayPayloadPermissions;
-  };
-}
-
-function getSegmentView(segments: DisplaySegment[], agendaItemId: string | null) {
-  const activeIndex = segments.findIndex((segment) => segment.id === agendaItemId);
-  const safeIndex = activeIndex >= 0 ? activeIndex : 0;
-  return {
-    currentTitle: segments[safeIndex]?.title ?? "",
-    currentSpeaker: segments[safeIndex]?.speaker ?? "",
-    nextTitle: segments[safeIndex + 1]?.title ?? "",
   };
 }
 
@@ -83,98 +65,103 @@ export function DisplayClient({ initialData }: DisplayClientProps) {
   const urgent = initialData.urgentSecs;
 
   useEffect(() => {
-    const channel = supabase
-      .channel(`display-${initialData.eventId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "event_runtime", filter: `event_id=eq.${initialData.eventId}` },
-        (payload) => {
-          const runtime = payload.new as RuntimeRow;
-          if (!runtime?.event_id) return;
-          setState((prev) => {
-            const currentRuntime = { version: prev.runtimeVersion, updated_at: prev.runtimeUpdatedAt };
-            const incomingRuntime = { version: runtime.version ?? 0, updated_at: runtime.updated_at };
-            if (!shouldAcceptRuntimeUpdate(currentRuntime, incomingRuntime)) return prev;
-            const nextSegments = getSegmentView(initialData.segments, runtime.current_agenda_item_id);
-            const timerState = {
-              durationSeconds: runtime.duration_seconds,
-              manualOffsetSeconds: runtime.manual_offset_seconds,
-              status: runtime.timer_status as "running" | "paused",
-              startedAt: runtime.started_at,
-            };
-            return {
-              ...prev,
-              displaySeconds: computeDisplaySeconds(
-                timerState,
-                runtime.timer_mode === "count_up" ? "count_up" : "countdown",
-                Date.now(),
-              ),
-              running: runtime.timer_status === "running",
-              startedAt: runtime.started_at,
-              durationSeconds: runtime.duration_seconds,
-              timerMode: runtime.timer_mode,
-              currentAgendaItemId: runtime.current_agenda_item_id,
-              currentTitle: nextSegments.currentTitle,
-              currentSpeaker: nextSegments.currentSpeaker,
-              nextTitle: nextSegments.nextTitle,
-              runtimeVersion: runtime.version ?? 0,
-              runtimeUpdatedAt: runtime.updated_at,
-            };
-          });
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "event_messages", filter: `event_id=eq.${initialData.eventId}` },
-        (payload) => {
-          const message = payload.new as MessageRow & { display_target?: string | null };
-          if (!message?.body) return;
-          if (!matchesDisplayTarget(message.display_target, initialData.displayId, initialData.displayType)) return;
-          if (message.expires_at && message.expires_at <= new Date().toISOString()) return;
-          setState((prev) => ({
+    let cancelled = false;
+    const applySnapshot = (snapshot: typeof initialData) => {
+      setState((prev) => {
+        const currentRuntime = { version: prev.runtimeVersion, updated_at: prev.runtimeUpdatedAt };
+        const incomingRuntime = { version: snapshot.runtimeVersion ?? 0, updated_at: snapshot.runtimeUpdatedAt };
+        if (!shouldAcceptRuntimeUpdate(currentRuntime, incomingRuntime)) {
+          return {
             ...prev,
-            message: message.body ?? "",
-            messagePriority: message.priority ?? "normal",
-          }));
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "event_messages", filter: `event_id=eq.${initialData.eventId}` },
-        (payload) => {
-          const message = payload.new as MessageRow;
-          if (message?.cleared_at) setState((prev) => ({ ...prev, message: "", messagePriority: "normal" }));
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "production_cues", filter: `event_id=eq.${initialData.eventId}` },
-        (payload) => {
-          const cue = payload.new as ProductionCue;
-          if (!initialData.permissions.cues || !matchesDisplayTarget(cue.target, initialData.displayId, initialData.displayType)) return;
-          setState((prev) => ({ ...prev, activeCues: activeCueList([...prev.activeCues, cue], initialData.displayId, initialData.displayType) }));
-        },
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "production_cues", filter: `event_id=eq.${initialData.eventId}` },
-        (payload) => {
-          const cue = payload.new as ProductionCue;
-          if (!initialData.permissions.cues) return;
-          setState((prev) => {
-            const next = prev.activeCues
-              .filter((item) => item.id !== cue.id)
-              .concat(cue.cleared_at || !matchesDisplayTarget(cue.target, initialData.displayId, initialData.displayType) ? [] : [cue]);
-            return { ...prev, activeCues: activeCueList(next, initialData.displayId, initialData.displayType) };
-          });
-        },
-      )
-      .subscribe((status) => setState((prev) => ({ ...prev, connected: status === "SUBSCRIBED" })));
-
-    return () => {
-      void supabase.removeChannel(channel);
+            connected: true,
+            message: snapshot.message,
+            messagePriority: snapshot.messagePriority,
+            activeCues: activeCueList(snapshot.activeCues, initialData.displayId, initialData.displayType),
+          };
+        }
+        return {
+          ...prev,
+          displaySeconds: snapshot.remaining,
+          running: snapshot.timerStatus === "running",
+          startedAt: snapshot.startedAt,
+          durationSeconds: snapshot.durationSeconds,
+          timerMode: snapshot.timerMode,
+          currentAgendaItemId: snapshot.currentAgendaItemId,
+          currentTitle: snapshot.currentTitle,
+          currentSpeaker: snapshot.currentSpeaker,
+          nextTitle: snapshot.nextTitle,
+          message: snapshot.message,
+          messagePriority: snapshot.messagePriority,
+          activeCues: activeCueList(snapshot.activeCues, initialData.displayId, initialData.displayType),
+          connected: true,
+          runtimeVersion: snapshot.runtimeVersion,
+          runtimeUpdatedAt: snapshot.runtimeUpdatedAt,
+        };
+      });
     };
-  }, [initialData.displayId, initialData.displayType, initialData.eventId, initialData.permissions.cues, initialData.segments]);
+
+    const refreshOnce = async () => {
+      const response = await fetch("/api/display/snapshot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: initialData.token }),
+      });
+      if (!response.ok) {
+        if (!cancelled) setState((prev) => ({ ...prev, connected: false }));
+        return;
+      }
+      const snapshot = await response.json() as typeof initialData;
+      if (cancelled) return;
+      applySnapshot(snapshot);
+    };
+
+    const controller = new AbortController();
+    const connectStream = async () => {
+      try {
+        const response = await fetch("/api/display/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: initialData.token }),
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          await refreshOnce();
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!cancelled) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            const event = JSON.parse(line) as { type: "snapshot"; snapshot: typeof initialData } | { type: "revoked" };
+            if (event.type === "revoked") {
+              setState((prev) => ({ ...prev, connected: false }));
+              return;
+            }
+            applySnapshot(event.snapshot);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setState((prev) => ({ ...prev, connected: false }));
+          await refreshOnce();
+        }
+      }
+    };
+
+    void connectStream();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [initialData.displayId, initialData.displayType, initialData.token]);
 
   useEffect(() => {
     if (!state.running) return;

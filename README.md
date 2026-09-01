@@ -4,22 +4,24 @@ Event Timer is professional live-event timing and run-of-show software.
 
 ## Production backend
 
-- Supabase project: `Runline Production`
-- Project ref: `tqbppknxhldhtwexwgbo`
-- Browser URL: `https://tqbppknxhldhtwexwgbo.supabase.co`
+- Production Supabase project ref: set `NEXT_PUBLIC_SUPABASE_PRODUCTION_REF`
+- Staging Supabase project ref: set `NEXT_PUBLIC_SUPABASE_STAGING_REF`
+- Test Supabase project ref: set `NEXT_PUBLIC_SUPABASE_TEST_REF`
+- Browser URL: set `NEXT_PUBLIC_SUPABASE_URL`
 - Authentication: Supabase email/password with persistent browser sessions
 - Persistence: Supabase Postgres with row-level security
 - Live updates: Supabase Realtime
 
-> **Note:** The Supabase project is named "Runline Production" for historical reasons.
-> The project ref (`tqbppknxhldhtwexwgbo`) and table names must not be renamed as
-> they reference the deployed backend.
-
 The application requires:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://tqbppknxhldhtwexwgbo.supabase.co
+NEXT_PUBLIC_EVENT_TIMER_ENV=staging
+NEXT_PUBLIC_SUPABASE_URL=https://your-staging-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+NEXT_PUBLIC_SUPABASE_PRODUCTION_REF=your-production-ref
+NEXT_PUBLIC_SUPABASE_STAGING_REF=your-staging-ref
+NEXT_PUBLIC_SUPABASE_TEST_REF=your-test-ref
+SUPABASE_SECRET_KEY=sb_secret_...
 ```
 
 Only the active browser-safe publishable key belongs in the frontend. Never add
