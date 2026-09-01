@@ -37,7 +37,7 @@ export function useEventRealtime({
 
     const channel = supabase
       .channel(`event-timer-${currentId}`, {
-        config: operatorEmail ? { presence: { key: operatorEmail } } : undefined,
+        config: operatorEmail ? { presence: { key: operatorEmail } } : {},
       })
       .on(
         "postgres_changes",

@@ -53,7 +53,8 @@ COMMENT ON TABLE event_displays IS 'Remote display screens paired to an event. E
 
 ALTER TABLE event_displays ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "event_displays_owner_all"
+DROP POLICY IF EXISTS "event_displays_owner_all" ON event_displays;
+CREATE POLICY "event_displays_owner_all"
   ON event_displays
   FOR ALL
   TO authenticated
@@ -84,7 +85,8 @@ COMMENT ON TABLE segment_runs IS 'Actual timing history for each segment run. Su
 
 ALTER TABLE segment_runs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "segment_runs_owner_all"
+DROP POLICY IF EXISTS "segment_runs_owner_all" ON segment_runs;
+CREATE POLICY "segment_runs_owner_all"
   ON segment_runs
   FOR ALL
   TO authenticated

@@ -144,7 +144,7 @@ export function EventReport({ event }: EventReportProps) {
               <XAxis type="number" tickFormatter={(value) => formatMinutes(Number(value))} />
               <YAxis type="category" dataKey="name" width={140} />
               <Tooltip
-                formatter={(value: number, name: string, item) => {
+                formatter={(value, name, item) => {
                   if (name === "actual" && !item.payload.hasActual) return ["—", "Actual"];
                   return [formatMinutes(Number(value)), name === "planned" ? "Planned" : "Actual"];
                 }}

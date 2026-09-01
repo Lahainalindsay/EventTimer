@@ -3,6 +3,7 @@ import test from "node:test";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://tqbppknxhldhtwexwgbo.supabase.co";
 process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??= "sb_publishable_test_key";
+process.env.NEXT_PUBLIC_SUPABASE_TEST_REF ??= "tqbppknxhldhtwexwgbo";
 
 const developmentPreviewMeta =
   /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;

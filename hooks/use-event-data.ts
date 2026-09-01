@@ -358,7 +358,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setDisplays([]);
         return;
       }
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     setDisplays((data ?? []) as EventDisplay[]);
@@ -390,7 +390,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setMembers([]);
         return [];
       }
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return [];
     }
     const next = (data ?? []) as EventMember[];
@@ -408,7 +408,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .order("triggered_at");
     if (error) {
       if (isMissingRelationError(error.message)) return [];
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return [];
     }
     const cues = (data ?? []) as ProductionCue[];
@@ -564,7 +564,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .select("*")
       .single();
     if (error || !created) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return "";
     }
     const segments = cloneSegments(sourceSegments, settings);
@@ -643,7 +643,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     if (event) await closeOpenSegmentRuns(event, "event_end");
     const { error } = await supabase.from("events").delete().eq("id", id);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return false;
     }
     const rest = events.filter((item) => item.id !== id);
@@ -660,7 +660,7 @@ export function useEventData(session: Session): UseEventDataReturn {
   const updateEventLifecycle = useCallback(async (id: string, status: EventLifecycle): Promise<void> => {
     const { error } = await supabase.from("events").update({ lifecycle_status: status, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     setEvents((all) => all.map((event) => (event.id === id ? { ...event, lifecycle: status } : event)));
@@ -747,7 +747,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .update({ lifecycle_status: "completed", updated_at: new Date().toISOString() })
       .eq("id", eventId);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     setEvents((all) => all.map((item) => (item.id === eventId ? finalEvent : item)));
@@ -769,7 +769,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       })
       .eq("id", current.id);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     updateCurrent({ ...current, name, date, venue, settings, updatedAt: Date.now() });
@@ -876,7 +876,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         urgent_seconds: segment.urgentSecs,
       })),
     );
-    if (error) setFeedback(formatUserError("permission_denied", error));
+    if (error) setFeedback(formatUserError("permission_denied", error ?? undefined));
   };
 
   const saveSegment = async (item: Segment, isEdit: boolean): Promise<boolean> => {
@@ -899,7 +899,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       urgent_seconds: item.urgentSecs,
     });
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return false;
     }
     const activeSegment = segments[current.active];
@@ -939,7 +939,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     }
     const { error } = await supabase.from("agenda_items").delete().eq("id", id);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     const segments = current.segments.filter((segment) => segment.id !== id);
@@ -987,7 +987,7 @@ export function useEventData(session: Session): UseEventDataReturn {
         setFeedback("Displays are unavailable until the Phase 3 SQL migration is applied");
         return null;
       }
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return null;
     }
     const display = { ...(data as EventDisplay), pairingCode: code };
@@ -1065,7 +1065,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       expires_at: expiresAt,
     });
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     updateCurrent({
@@ -1087,7 +1087,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .eq("message_type", "message")
       .is("cleared_at", null);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     updateCurrent({ ...current, message: "", messagePriority: "normal", messageTarget: null, messageExpiresAt: null });
@@ -1106,7 +1106,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .select("*")
       .single();
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error));
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     updateCurrent({ ...current, activeCues: [...current.activeCues, data as ProductionCue] });
@@ -1120,7 +1120,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .update({ cleared_at: new Date().toISOString() })
       .eq("id", cueId);
     if (error) {
-      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error));
+      if (!isMissingRelationError(error.message)) setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     updateCurrent({ ...current, activeCues: current.activeCues.filter((cue) => cue.id !== cueId) });
@@ -1193,7 +1193,7 @@ export function useEventData(session: Session): UseEventDataReturn {
       .select("*")
       .single();
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return { link: "" };
     }
     setMembers((all) => [data as EventMember, ...all]);
@@ -1206,7 +1206,7 @@ export function useEventData(session: Session): UseEventDataReturn {
   const removeMember = useCallback(async (memberId: string): Promise<void> => {
     const { error } = await supabase.from("event_members").delete().eq("id", memberId);
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     setMembers((all) => all.filter((member) => member.id !== memberId));
@@ -1216,7 +1216,7 @@ export function useEventData(session: Session): UseEventDataReturn {
   const changeMemberRole = useCallback(async (memberId: string, role: string): Promise<void> => {
     const { data, error } = await supabase.from("event_members").update({ role }).eq("id", memberId).select("*").single();
     if (error) {
-      setFeedback(formatUserError("permission_denied", error));
+      setFeedback(formatUserError("permission_denied", error ?? undefined));
       return;
     }
     setMembers((all) => all.map((member) => (member.id === memberId ? (data as EventMember) : member)));

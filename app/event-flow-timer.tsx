@@ -117,6 +117,31 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
     changeMemberRole,
   } = data;
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const inviteToken = params.get("token");
+    if (params.get("invite") !== "pending" || !inviteToken) return;
+    const accept = async () => {
+      const res = await fetch("/api/invite/accept", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ token: inviteToken }),
+      });
+      if (res.ok) {
+        setFeedback("Invite accepted");
+        window.history.replaceState(null, "", "/dashboard?invite=accepted");
+        void loadCloud();
+        return;
+      }
+      setFeedback("Invite could not be accepted for this account");
+    };
+    void accept();
+  }, [loadCloud, session.access_token, setFeedback]);
+
   const onRuntimeUpdate = useCallback((runtime: RuntimeRow) => {
     setEvents((all) =>
       all.map((event) => {

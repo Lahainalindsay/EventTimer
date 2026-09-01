@@ -15,7 +15,14 @@ export const authErrorMessage = (reason: unknown) => {
 function inviteNotice() {
   if (typeof window === "undefined") return "";
   const invite = new URLSearchParams(window.location.search).get("invite");
+  if (invite === "pending") return "Sign in or create an account to accept this invite.";
   return invite === "accepted" ? "Invite accepted. Sign in to continue to Event Timer." : "";
+}
+
+function pendingInviteToken() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  return params.get("invite") === "pending" ? (params.get("token") ?? "") : "";
 }
 
 export function AuthScreen({ initialMode }: { initialMode: AuthMode }) {
@@ -35,12 +42,15 @@ export function AuthScreen({ initialMode }: { initialMode: AuthMode }) {
     try {
       if (mode === "signup") {
         const fullName = String(data.get("name") || "").trim();
+        const inviteToken = pendingInviteToken();
         const { data: result, error: authError } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { full_name: fullName },
-            emailRedirectTo: `${location.origin}/dashboard`,
+            emailRedirectTo: inviteToken
+              ? `${location.origin}/invite?token=${encodeURIComponent(inviteToken)}`
+              : `${location.origin}/dashboard`,
           },
         });
         if (authError) throw authError;
