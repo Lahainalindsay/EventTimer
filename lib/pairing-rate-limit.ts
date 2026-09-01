@@ -1,7 +1,6 @@
 export const PAIRING_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 export const PAIRING_MAX_FAILED_ATTEMPTS = 8;
 
-type Attempt = { at: number; ok: boolean };
 type PairingAttemptReader = {
   from: (table: "display_pairing_attempts") => {
     select: (
@@ -32,38 +31,11 @@ type PairingAttemptReader = {
   };
 };
 
-const globalForPairing = globalThis as typeof globalThis & {
-  __eventTimerPairingAttempts?: Map<string, Attempt[]>;
-};
-
-function store() {
-  globalForPairing.__eventTimerPairingAttempts ??= new Map<string, Attempt[]>();
-  return globalForPairing.__eventTimerPairingAttempts;
-}
-
-export function isPairingThrottled(key: string, nowMs = Date.now()): boolean {
-  const cutoff = nowMs - PAIRING_ATTEMPT_WINDOW_MS;
-  const attempts = (store().get(key) ?? []).filter((attempt) => attempt.at >= cutoff);
-  store().set(key, attempts);
-  return attempts.filter((attempt) => !attempt.ok).length >= PAIRING_MAX_FAILED_ATTEMPTS;
-}
-
-export function recordPairingAttempt(key: string, ok: boolean, nowMs = Date.now()): void {
-  const cutoff = nowMs - PAIRING_ATTEMPT_WINDOW_MS;
-  const attempts = (store().get(key) ?? []).filter((attempt) => attempt.at >= cutoff);
-  attempts.push({ at: nowMs, ok });
-  store().set(key, attempts);
-}
-
-export function resetPairingAttemptsForTests(): void {
-  store().clear();
-}
-
 export async function isPairingThrottledByStore(
   rawSupabase: unknown,
   key: string,
   nowMs = Date.now(),
-): Promise<boolean> {
+): Promise<{ throttled: boolean; available: boolean }> {
   const supabase = rawSupabase as PairingAttemptReader;
   const cutoff = new Date(nowMs - PAIRING_ATTEMPT_WINDOW_MS).toISOString();
   const { count, error } = await supabase
@@ -74,10 +46,10 @@ export async function isPairingThrottledByStore(
     .gte("attempted_at", cutoff);
 
   if (error) {
-    return isPairingThrottled(key, nowMs);
+    return { throttled: false, available: false };
   }
 
-  return (count ?? 0) >= PAIRING_MAX_FAILED_ATTEMPTS;
+  return { throttled: (count ?? 0) >= PAIRING_MAX_FAILED_ATTEMPTS, available: true };
 }
 
 export async function recordPairingAttemptInStore(
@@ -86,13 +58,13 @@ export async function recordPairingAttemptInStore(
   eventId: string | null,
   ok: boolean,
   nowMs = Date.now(),
-): Promise<void> {
+): Promise<boolean> {
   const supabase = rawSupabase as PairingAttemptReader;
-  recordPairingAttempt(key, ok, nowMs);
-  await supabase.from("display_pairing_attempts").insert({
+  const { error } = await supabase.from("display_pairing_attempts").insert({
     rate_limit_key: key,
     event_id: eventId,
     succeeded: ok,
     attempted_at: new Date(nowMs).toISOString(),
   });
+  return !error;
 }
