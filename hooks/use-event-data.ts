@@ -547,27 +547,26 @@ export function useEventData(session: Session): UseEventDataReturn {
     sourceSegments: Segment[],
     successMessage: string,
   ): Promise<string> => {
-    const { data: created, error } = await supabase
-      .from("events")
-      .insert({
-        owner_id: session.user.id,
-        name,
-        event_date: date,
-        venue,
-        timezone: settings.timezone,
-        warning_seconds: settings.warningSecs,
-        urgent_seconds: settings.urgentSecs,
-        auto_advance: settings.autoAdvance,
-        status: "draft",
-        lifecycle_status: "draft",
-      })
-      .select("*")
-      .single();
+    const segments = cloneSegments(sourceSegments, settings);
+    const { data: createdRows, error } = await supabase.rpc("create_event_atomic", {
+      p_name: name,
+      p_event_date: date,
+      p_venue: venue,
+      p_timezone: settings.timezone,
+      p_warning_seconds: settings.warningSecs,
+      p_urgent_seconds: settings.urgentSecs,
+      p_auto_advance: settings.autoAdvance,
+    });
+    const created = Array.isArray(createdRows) ? createdRows[0] : createdRows;
     if (error || !created) {
       setFeedback(formatUserError("permission_denied", error ?? undefined));
+      reportError({
+        context: "event_creation",
+        message: "Atomic event creation RPC failed",
+        timestamp: new Date().toISOString(),
+      });
       return "";
     }
-    const segments = cloneSegments(sourceSegments, settings);
     const { error: agendaError } = await supabase.from("agenda_items").insert(
       segments.map((segment, index) => ({
         id: segment.id,
@@ -608,14 +607,13 @@ export function useEventData(session: Session): UseEventDataReturn {
       messageTarget: null,
       messageExpiresAt: null,
       updatedAt: Date.now(),
-      runtimeVersion: 0,
+      runtimeVersion: 1,
       settings,
       segmentRuns: [],
       activeCues: [],
     };
     setEvents((all) => [...all, fresh]);
     setCurrentId(fresh.id);
-    await persistRuntime(fresh, 0);
     setFeedback(successMessage);
     return fresh.id;
   }, [persistRuntime, session.user.id]);
