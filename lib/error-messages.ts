@@ -29,3 +29,19 @@ export function formatUserError(context: string, supabaseError?: { message?: str
       return "Something went wrong. Please try again.";
   }
 }
+
+export function formatEventCreationError(error?: { code?: string; message?: string }): string {
+  const code = error?.code?.toUpperCase() ?? "";
+  const message = error?.message?.toLowerCase() ?? "";
+  if (code === "PGRST202" || message.includes("could not find the function") || message.includes("does not exist")) {
+    return "Event creation is not available yet. Please contact the administrator.";
+  }
+  if (code === "42501" || message.includes("permission") || message.includes("row-level security")) {
+    return "You don't have permission to create this event.";
+  }
+  if (code === "22007" || code === "22023" || message.includes("event date") || message.includes("event name")) {
+    return "Enter a valid event name and date.";
+  }
+  if (code.startsWith("23")) return "Event creation could not be completed because the data was invalid.";
+  return "Event creation failed. Please try again.";
+}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { generateAccessToken, sha256Hex, type DisplayType } from "@/lib/display-access";
-import { formatUserError } from "@/lib/error-messages";
+import { formatEventCreationError, formatUserError } from "@/lib/error-messages";
 import { reportError } from "@/lib/observability";
 import { adjustTime, computeRemainingSeconds, pause as pauseTimer, resume as resumeTimer } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
@@ -556,36 +556,31 @@ export function useEventData(session: Session): UseEventDataReturn {
       p_warning_seconds: settings.warningSecs,
       p_urgent_seconds: settings.urgentSecs,
       p_auto_advance: settings.autoAdvance,
-    });
-    const created = Array.isArray(createdRows) ? createdRows[0] : createdRows;
-    if (error || !created) {
-      setFeedback(formatUserError("permission_denied", error ?? undefined));
-      reportError({
-        context: "event_creation",
-        message: "Atomic event creation RPC failed",
-        timestamp: new Date().toISOString(),
-      });
-      return "";
-    }
-    const { error: agendaError } = await supabase.from("agenda_items").insert(
-      segments.map((segment, index) => ({
+      p_segments: segments.map((segment, index) => ({
         id: segment.id,
-        event_id: created.id,
         position: index,
         title: segment.title,
         speaker: segment.person,
-        notes: segment.notes || null,
+        notes: segment.notes || "",
         planned_duration_seconds: segment.duration * 60,
-        scheduled_start: `${date}T${segment.time}:00`,
+        time: segment.time,
         segment_type: segment.segmentType,
         timer_mode: segment.timerMode,
         warning_seconds: segment.warningSecs,
         urgent_seconds: segment.urgentSecs,
       })),
-    );
-    if (agendaError) {
-      await supabase.from("events").delete().eq("id", created.id);
-      setFeedback(formatUserError("permission_denied", agendaError));
+    });
+    const created = Array.isArray(createdRows) ? createdRows[0] : createdRows;
+    if (error || !created) {
+      setFeedback(formatEventCreationError(error ?? undefined));
+      reportError({
+        context: "event_creation",
+        message: "Atomic event creation RPC failed",
+        error_code: error?.code,
+        error_details: error?.details,
+        error_hint: error?.hint,
+        timestamp: new Date().toISOString(),
+      });
       return "";
     }
     const fresh: EventData = {
@@ -616,7 +611,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     setCurrentId(fresh.id);
     setFeedback(successMessage);
     return fresh.id;
-  }, [persistRuntime, session.user.id]);
+  }, [session.user.id]);
 
   const createEvent = async (name: string, date: string, venue: string) => {
     const settings = defaultSettings();
