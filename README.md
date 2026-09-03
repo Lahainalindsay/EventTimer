@@ -30,9 +30,57 @@ a service-role key to this repository or a `NEXT_PUBLIC_*` variable.
 ## Commands
 
 - `npm run dev` — start the local Sites preview
-- `npm run build` — build the production bundle
+- `npm run build` — build the Vercel/Next.js production bundle
+- `npm run build:vinext` — build the Cloudflare Workers bundle
 - `npm test` — build and run repository tests
 - `npm run lint` — run ESLint
+
+## Deployment
+
+This repository uses Vinext's Cloudflare Workers deployment path. The existing
+`vite.config.ts` and `worker/index.ts` provide the Worker integration; run
+`npx vinext deploy --preview` after authenticating Wrangler. Set the Cloudflare
+account through `CLOUDFLARE_ACCOUNT_ID` or the generated `wrangler.jsonc`.
+
+Configure these values in the Cloudflare Worker settings under Settings >
+Variables and Secrets. Use Preview for beta previews and Production only after
+staging validation:
+
+- `NEXT_PUBLIC_EVENT_TIMER_ENV`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `NEXT_PUBLIC_SUPABASE_PRODUCTION_REF`
+- `NEXT_PUBLIC_SUPABASE_STAGING_REF`
+- `NEXT_PUBLIC_SUPABASE_TEST_REF`
+- `SUPABASE_SECRET_KEY` (encrypted secret, server-only)
+
+The URL must match the explicitly selected environment ref. Never define the
+secret with a `NEXT_PUBLIC_` name or commit a populated `.env` file.
+
+## Database deployment
+
+Migration status is not available until the Supabase project is linked. After
+selecting the intended non-production project, authenticate the CLI and run:
+
+```bash
+supabase link --project-ref <staging-project-ref>
+supabase migration list --linked
+supabase db push --linked
+supabase migration list --linked
+```
+
+The repository migration order is:
+
+1. `001_phase2_additive.sql`
+2. `002_phase3_runtime_and_displays.sql`
+3. `003_phase4_cues_templates_rpc.sql`
+4. `004_phase5_members_lifecycle.sql`
+5. `20260831192403_critical_security_repair.sql`
+6. `20260901041941_atomic_display_pairing.sql`
+
+Run the same sequence against Production only after the staging schema and
+private-beta checks pass. This repository does not automatically apply
+migrations to any Supabase project.
 
 ## Routes
 
