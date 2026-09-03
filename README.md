@@ -4,10 +4,7 @@ Event Timer is professional live-event timing and run-of-show software.
 
 ## Production backend
 
-- Production Supabase project ref: set `NEXT_PUBLIC_SUPABASE_PRODUCTION_REF`
-- Staging Supabase project ref: set `NEXT_PUBLIC_SUPABASE_STAGING_REF`
-- Test Supabase project ref: set `NEXT_PUBLIC_SUPABASE_TEST_REF`
-- Browser URL: set `NEXT_PUBLIC_SUPABASE_URL`
+- Supabase project: set `NEXT_PUBLIC_SUPABASE_URL`
 - Authentication: Supabase email/password with persistent browser sessions
 - Persistence: Supabase Postgres with row-level security
 - Live updates: Supabase Realtime
@@ -15,14 +12,15 @@ Event Timer is professional live-event timing and run-of-show software.
 The application requires:
 
 ```env
-NEXT_PUBLIC_EVENT_TIMER_ENV=staging
-NEXT_PUBLIC_SUPABASE_URL=https://your-staging-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-NEXT_PUBLIC_SUPABASE_PRODUCTION_REF=your-production-ref
-NEXT_PUBLIC_SUPABASE_STAGING_REF=your-staging-ref
-NEXT_PUBLIC_SUPABASE_TEST_REF=your-test-ref
 SUPABASE_SECRET_KEY=sb_secret_...
 ```
+
+`NEXT_PUBLIC_EVENT_TIMER_ENV` and the matching
+`NEXT_PUBLIC_SUPABASE_{PRODUCTION,STAGING,TEST}_REF` variables are optional
+project-safety labels. When a ref is configured, the application verifies that
+the URL matches it. A one-project private beta can omit all of them.
 
 Only the active browser-safe publishable key belongs in the frontend. Never add
 a service-role key to this repository or a `NEXT_PUBLIC_*` variable.
@@ -46,13 +44,13 @@ Configure these values in the Cloudflare Worker settings under Settings >
 Variables and Secrets. Use Preview for beta previews and Production only after
 staging validation:
 
-- `NEXT_PUBLIC_EVENT_TIMER_ENV`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `NEXT_PUBLIC_SUPABASE_PRODUCTION_REF`
-- `NEXT_PUBLIC_SUPABASE_STAGING_REF`
-- `NEXT_PUBLIC_SUPABASE_TEST_REF`
 - `SUPABASE_SECRET_KEY` (encrypted secret, server-only)
+
+Optional safety labels: `NEXT_PUBLIC_EVENT_TIMER_ENV` and the matching
+`NEXT_PUBLIC_SUPABASE_PRODUCTION_REF`, `NEXT_PUBLIC_SUPABASE_STAGING_REF`, or
+`NEXT_PUBLIC_SUPABASE_TEST_REF`.
 
 The URL must match the explicitly selected environment ref. Never define the
 secret with a `NEXT_PUBLIC_` name or commit a populated `.env` file.

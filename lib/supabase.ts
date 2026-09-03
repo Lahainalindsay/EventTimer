@@ -29,11 +29,11 @@ function projectRefFromUrl(url: string): string | null {
 const actualRef = projectRefFromUrl(supabaseUrl);
 const expectedRef = expectedRefs[deploymentTarget];
 
-if (!expectedRef) {
-  throw new Error(`Event Timer Supabase project ref is not configured for ${deploymentTarget}.`);
+if (!(deploymentTarget in expectedRefs)) {
+  throw new Error("Event Timer has an unsupported Supabase environment label.");
 }
 
-if (actualRef !== expectedRef) {
+if (expectedRef && actualRef !== expectedRef) {
   throw new Error("Event Timer is configured for an unexpected Supabase project.");
 }
 
@@ -49,4 +49,4 @@ export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
   },
 });
 
-export const EVENT_TIMER_SUPABASE_REF = expectedRef;
+export const EVENT_TIMER_SUPABASE_REF = actualRef;

@@ -6,11 +6,13 @@ const client = readFileSync("lib/supabase.ts", "utf8");
 const app = readFileSync("app/event-flow-timer.tsx", "utf8");
 const eventDataHook = readFileSync("hooks/use-event-data.ts", "utf8");
 
-test("requires explicit Event Timer Supabase project refs", () => {
+test("requires the runtime Supabase URL and publishable key", () => {
   assert.match(client, /NEXT_PUBLIC_SUPABASE_PRODUCTION_REF/);
   assert.match(client, /NEXT_PUBLIC_SUPABASE_STAGING_REF/);
   assert.match(client, /NEXT_PUBLIC_SUPABASE_TEST_REF/);
   assert.match(client, /NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.match(client, /if \(expectedRef && actualRef !== expectedRef\)/);
+  assert.doesNotMatch(client, /if \(!expectedRef\)/);
   assert.doesNotMatch(client, /service_role/i);
   assert.doesNotMatch(client, /R.NLINE/i);
 });
