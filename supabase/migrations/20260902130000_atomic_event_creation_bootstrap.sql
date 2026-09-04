@@ -56,11 +56,11 @@ BEGIN
 
   INSERT INTO public.events (
     owner_id, name, event_date, venue, timezone, warning_seconds,
-    urgent_seconds, auto_advance, status, lifecycle_status
+    urgent_seconds, auto_advance, lifecycle_status
   )
   VALUES (
     v_user_id, trim(p_name), p_event_date, p_venue, p_timezone,
-    p_warning_seconds, p_urgent_seconds, p_auto_advance, 'draft', 'draft'
+    p_warning_seconds, p_urgent_seconds, p_auto_advance, 'draft'
   )
   RETURNING * INTO v_event;
 
