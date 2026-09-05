@@ -5,7 +5,14 @@ import type { Session } from "@supabase/supabase-js";
 import { generateAccessToken, sha256Hex, type DisplayType } from "@/lib/display-access";
 import { formatEventCreationError, formatUserError } from "@/lib/error-messages";
 import { reportError } from "@/lib/observability";
-import { adjustTime, computeRemainingSeconds, pause as pauseTimer, resume as resumeTimer } from "@/lib/timer-engine";
+import {
+  adjustTime,
+  computeDisplaySeconds,
+  computeElapsedSeconds,
+  computeRemainingSeconds,
+  pause as pauseTimer,
+  resume as resumeTimer,
+} from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
 import type {
   CueType,
@@ -142,6 +149,31 @@ function runtimeStateFromEvent(event: EventData) {
   };
 }
 
+function pauseRuntimeForMode(event: EventData, nowMs: number) {
+  if (event.timerMode === "count_up") {
+    return {
+      durationSeconds: computeElapsedSeconds(runtimeStateFromEvent(event), nowMs),
+      manualOffsetSeconds: 0,
+      status: "paused" as const,
+      startedAt: null,
+    };
+  }
+  return pauseTimer(runtimeStateFromEvent(event), nowMs);
+}
+
+function adjustRuntimeForMode(event: EventData, deltaSeconds: number, nowMs: number) {
+  if (event.timerMode === "count_up") {
+    const elapsed = Math.max(0, computeElapsedSeconds(runtimeStateFromEvent(event), nowMs) + deltaSeconds);
+    return {
+      durationSeconds: elapsed,
+      manualOffsetSeconds: 0,
+      status: event.running ? ("running" as const) : ("paused" as const),
+      startedAt: event.running ? new Date(nowMs).toISOString() : null,
+    };
+  }
+  return adjustTime(runtimeStateFromEvent(event), deltaSeconds, nowMs);
+}
+
 export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefined): EventData {
   if (!runtime) return event;
   const found = event.segments.findIndex((segment) => segment.id === runtime.current_agenda_item_id);
@@ -152,13 +184,14 @@ export function mapRuntime(event: EventData, runtime: RuntimeRow | null | undefi
     status: runtime.timer_status as "running" | "paused",
     startedAt: runtime.started_at,
   };
+  const timerMode = runtime.timer_mode === "count_up" ? "count_up" : currentSegmentTimerMode(event, active);
   return {
     ...event,
     active,
-    remaining: computeRemainingSeconds(timerState, Date.now()),
+    remaining: computeDisplaySeconds(timerState, timerMode, Date.now()),
     timerDuration: runtime.duration_seconds,
     timerStartedAt: runtime.started_at,
-    timerMode: runtime.timer_mode === "count_up" ? "count_up" : currentSegmentTimerMode(event, active),
+    timerMode,
     running: runtime.timer_status === "running",
     updatedAt: new Date(runtime.updated_at).getTime(),
     runtimeVersion: runtime.version ?? 0,
@@ -825,11 +858,11 @@ export function useEventData(session: Session): UseEventDataReturn {
     }
     const now = Date.now();
     commitRuntime((event) => {
-      const next = event.running ? pauseTimer(runtimeStateFromEvent(event), now) : resumeTimer(runtimeStateFromEvent(event), now);
+      const next = event.running ? pauseRuntimeForMode(event, now) : resumeTimer(runtimeStateFromEvent(event), now);
       return {
         ...event,
         running: !event.running,
-        remaining: computeRemainingSeconds(next, now),
+        remaining: computeDisplaySeconds(next, event.timerMode, now),
         timerDuration: next.durationSeconds,
         timerStartedAt: next.startedAt,
         updatedAt: now,
@@ -840,10 +873,10 @@ export function useEventData(session: Session): UseEventDataReturn {
   const adjustTimer = (deltaSeconds: number) => {
     const now = Date.now();
     commitRuntime((event) => {
-      const next = adjustTime(runtimeStateFromEvent(event), deltaSeconds, now);
+      const next = adjustRuntimeForMode(event, deltaSeconds, now);
       return {
         ...event,
-        remaining: computeRemainingSeconds(next, now),
+        remaining: computeDisplaySeconds(next, event.timerMode, now),
         timerDuration: next.durationSeconds,
         timerStartedAt: next.startedAt,
         updatedAt: now,

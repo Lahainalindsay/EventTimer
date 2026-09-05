@@ -192,6 +192,7 @@ export function OperatorConsole({
             remaining={event.remaining}
             stateName={stateName}
             running={event.running}
+            mode={event.timerMode}
             warningSecs={thresholds.warningSecs}
             urgentSecs={thresholds.urgentSecs}
           />
@@ -203,8 +204,8 @@ export function OperatorConsole({
             hasPrev={event.active > 0}
             onToggle={onToggleTimer}
             onAdjust={onAdjustTimer}
-            onReset={() => onSetTimer(segment.duration * 60, false)}
-            onRestart={() => onSetTimer(segment.duration * 60, true)}
+            onReset={() => onSetTimer(event.timerMode === "count_up" ? 0 : segment.duration * 60, false)}
+            onRestart={() => onSetTimer(event.timerMode === "count_up" ? 0 : segment.duration * 60, true)}
             onPrev={() => onJumpTo(event.active - 1, false)}
             onNext={() => next && onJumpTo(event.active + 1, true)}
           />

@@ -24,7 +24,7 @@ import { TemplatesView } from "@/components/event-timer/templates-view";
 import { mapRuntime, useEventData } from "@/hooks/use-event-data";
 import { useEventRealtime } from "@/hooks/use-event-realtime";
 import { shouldAcceptRuntimeUpdate, type VersionedRuntime } from "@/lib/runtime-version";
-import { computeRemainingSeconds } from "@/lib/timer-engine";
+import { computeDisplaySeconds } from "@/lib/timer-engine";
 import { supabase } from "@/lib/supabase";
 import type { AuthMode, MessageRow, ProductionCue, RuntimeRow, Screen } from "@/lib/types";
 
@@ -242,13 +242,14 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
         all.map((event) => {
           if (event.id !== currentId || !event.running) return event;
           const now = Date.now();
-          const remaining = computeRemainingSeconds(
+          const remaining = computeDisplaySeconds(
             {
               durationSeconds: event.timerDuration,
               manualOffsetSeconds: 0,
               status: "running",
               startedAt: event.timerStartedAt,
             },
+            event.timerMode,
             now,
           );
           return { ...event, remaining, updatedAt: now };

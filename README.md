@@ -75,6 +75,9 @@ The repository migration order is:
 4. `004_phase5_members_lifecycle.sql`
 5. `20260831192403_critical_security_repair.sql`
 6. `20260901041941_atomic_display_pairing.sql`
+7. `20260902120000_atomic_event_creation.sql`
+8. `20260902130000_atomic_event_creation_bootstrap.sql`
+9. `20260905065246_allow_overtime_runtime_values.sql`
 
 Run the same sequence against Production only after the staging schema and
 private-beta checks pass. This repository does not automatically apply

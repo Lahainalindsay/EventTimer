@@ -9,6 +9,7 @@ const migrations = readdirSync(migrationDir)
   .map((name) => [name, readFileSync(join(migrationDir, name), "utf8")]);
 const allSql = migrations.map(([, sql]) => sql).join("\n");
 const repair = readFileSync("supabase/migrations/20260831192403_critical_security_repair.sql", "utf8");
+const overtime = readFileSync("supabase/migrations/20260905065246_allow_overtime_runtime_values.sql", "utf8");
 
 test("migrations do not use invalid CREATE POLICY IF NOT EXISTS syntax", () => {
   assert.doesNotMatch(allSql, /CREATE\s+POLICY\s+IF\s+NOT\s+EXISTS/i);
@@ -26,10 +27,15 @@ test("runtime RPC explicitly authorizes owner, producer, and operator but not vi
 });
 
 test("runtime bootstrap and mutation keep database-side CAS semantics", () => {
-  assert.match(repair, /ON CONFLICT \(event_id\) DO UPDATE/);
-  assert.match(repair, /WHERE public\.event_runtime\.version = p_expected_version/);
-  assert.match(repair, /version = public\.event_runtime\.version \+ 1/);
-  assert.match(repair, /WHERE p_expected_version = 0/);
+  assert.match(overtime, /ON CONFLICT \(event_id\) DO UPDATE/);
+  assert.match(overtime, /WHERE public\.event_runtime\.version = p_expected_version/);
+  assert.match(overtime, /version = public\.event_runtime\.version \+ 1/);
+  assert.match(overtime, /WHERE p_expected_version = 0/);
+});
+
+test("runtime RPC allows countdown overtime but rejects negative count-up elapsed time", () => {
+  assert.match(overtime, /IF p_timer_mode = 'count_up' AND p_duration_seconds < 0/);
+  assert.doesNotMatch(overtime, /IF p_duration_seconds < 0 THEN/);
 });
 
 test("collaborator RLS covers private event tables", () => {

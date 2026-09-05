@@ -1,11 +1,12 @@
 "use client";
 
-import { formatTime, type TimerStateName } from "@/lib/timer-engine";
+import { formatTime, type TimerMode, type TimerStateName } from "@/lib/timer-engine";
 
 interface TimerDisplayProps {
   remaining: number;
   stateName: TimerStateName;
   running: boolean;
+  mode: TimerMode;
   warningSecs: number;
   urgentSecs: number;
 }
@@ -14,6 +15,7 @@ export function TimerDisplay({
   remaining,
   stateName,
   running,
+  mode,
   warningSecs,
   urgentSecs,
 }: TimerDisplayProps) {
@@ -26,7 +28,7 @@ export function TimerDisplay({
         : running
           ? "ON TIME"
           : "PAUSED";
-  const timerAriaLabel = `${stateLabel}. ${formatTime(remaining)} remaining.`;
+  const timerAriaLabel = `${stateLabel}. ${formatTime(remaining)} ${mode === "count_up" ? "elapsed" : "remaining"}.`;
 
   return (
     <>
@@ -35,11 +37,13 @@ export function TimerDisplay({
       </div>
       <div className="timer-state" data-state={stateName}>
         <span>{stateLabel}</span>
-        <small>
-          Warning at {String(Math.floor(warningSecs / 60)).padStart(2, "0")}:
-          {String(warningSecs % 60).padStart(2, "0")} · Urgent at {String(Math.floor(urgentSecs / 60)).padStart(2, "0")}:
-          {String(urgentSecs % 60).padStart(2, "0")}
-        </small>
+        {mode === "countdown" && (
+          <small>
+            Warning at {String(Math.floor(warningSecs / 60)).padStart(2, "0")}:
+            {String(warningSecs % 60).padStart(2, "0")} · Urgent at {String(Math.floor(urgentSecs / 60)).padStart(2, "0")}:
+            {String(urgentSecs % 60).padStart(2, "0")}
+          </small>
+        )}
       </div>
     </>
   );
