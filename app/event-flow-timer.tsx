@@ -467,7 +467,12 @@ function EventFlowTimer({ session, accountOnly }: { session: Session; accountOnl
                 String(data.get("name") || "").trim(),
                 String(data.get("date")),
                 String(data.get("venue") || "Main Stage"),
-              ).then(() => setCreateOpen(false));
+              ).then((createdId) => {
+                if (!createdId) return;
+                setCurrentId(createdId);
+                setScreen("live");
+                setCreateOpen(false);
+              });
             }}
             className="dialog-form"
           >

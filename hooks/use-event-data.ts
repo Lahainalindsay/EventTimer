@@ -94,6 +94,11 @@ function isMissingRelationError(message: string | undefined) {
   return text.includes("does not exist") || text.includes("could not find the table") || text.includes("relation");
 }
 
+function isMissingFunctionError(error: { code?: string; message?: string } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? "";
+  return error?.code?.toUpperCase() === "PGRST202" || message.includes("could not find the function");
+}
+
 function normalizeLifecycle(value: unknown): EventLifecycle {
   return LIFECYCLE_VALUES.includes(value as EventLifecycle) ? (value as EventLifecycle) : "draft";
 }
@@ -213,7 +218,7 @@ export interface UseEventDataReturn {
   loadCloud: () => Promise<void>;
   loadTemplates: () => Promise<EventTemplate[]>;
   loadMembers: (eventId: string) => Promise<EventMember[]>;
-  createEvent: (name: string, date: string, venue: string) => Promise<void>;
+  createEvent: (name: string, date: string, venue: string) => Promise<string>;
   duplicateEvent: (sourceId: string, newName: string, newDate: string) => Promise<string>;
   deleteEvent: (id: string) => Promise<boolean>;
   updateEventLifecycle: (id: string, status: EventLifecycle) => Promise<void>;
@@ -289,6 +294,51 @@ export function useEventData(session: Session): UseEventDataReturn {
       p_started_at: event.timerStartedAt,
       p_current_agenda_item_id: event.segments[event.active]?.id ?? null,
     });
+    if (isMissingFunctionError(error)) {
+      const now = new Date().toISOString();
+      const runtimePayload = {
+        event_id: event.id,
+        timer_status: event.running ? "running" : "paused",
+        duration_seconds: event.timerDuration,
+        manual_offset_seconds: 0,
+        timer_mode: event.timerMode,
+        started_at: event.timerStartedAt,
+        current_agenda_item_id: event.segments[event.active]?.id ?? null,
+        updated_at: now,
+      };
+      const fallback =
+        expectedVersion === 0
+          ? await supabase
+              .from("event_runtime")
+              .upsert({ ...runtimePayload, version: 1 }, { onConflict: "event_id" })
+              .select("*")
+              .single()
+          : await supabase
+              .from("event_runtime")
+              .update({ ...runtimePayload, version: expectedVersion + 1 })
+              .eq("event_id", event.id)
+              .eq("version", expectedVersion)
+              .select("*");
+      if (fallback.error) {
+        setFeedback(formatUserError("runtime_mutation", fallback.error));
+        reportError({
+          context: "runtime_mutation",
+          message: "Runtime fallback mutation failed",
+          event_id: event.id,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+      const fallbackRuntime = Array.isArray(fallback.data) ? (fallback.data[0] as RuntimeRow | undefined) : (fallback.data as RuntimeRow | null);
+      if (fallbackRuntime) {
+        updateRuntimeLocally(event.id, fallbackRuntime);
+        return;
+      }
+      const authoritative = await loadRuntimeRow(event.id, true);
+      if (authoritative) updateRuntimeLocally(event.id, authoritative);
+      else setFeedback(formatUserError("runtime_mutation"));
+      return;
+    }
     if (error) {
       setFeedback(formatUserError("runtime_mutation", error));
       reportError({
@@ -581,7 +631,7 @@ export function useEventData(session: Session): UseEventDataReturn {
     successMessage: string,
   ): Promise<string> => {
     const segments = cloneSegments(sourceSegments, settings);
-    const { data: createdRows, error } = await supabase.rpc("create_event_atomic", {
+    const rpcArgs = {
       p_name: name,
       p_event_date: date,
       p_venue: venue,
@@ -602,7 +652,63 @@ export function useEventData(session: Session): UseEventDataReturn {
         warning_seconds: segment.warningSecs,
         urgent_seconds: segment.urgentSecs,
       })),
-    });
+    };
+    let creationMode: "atomic" | "legacy" | "direct" = "atomic";
+    let { data: createdRows, error } = await supabase.rpc("create_event_atomic", rpcArgs);
+    if (isMissingFunctionError(error)) {
+      const legacy = await supabase.rpc("create_event_atomic", {
+        p_name: name,
+        p_event_date: date,
+        p_venue: venue,
+        p_timezone: settings.timezone,
+        p_warning_seconds: settings.warningSecs,
+        p_urgent_seconds: settings.urgentSecs,
+        p_auto_advance: settings.autoAdvance,
+      });
+      createdRows = legacy.data;
+      error = legacy.error;
+      if (!legacy.error) creationMode = "legacy";
+    }
+    if (isMissingFunctionError(error)) {
+      let direct = await supabase
+        .from("events")
+        .insert({
+          owner_id: session.user.id,
+          name: name.trim(),
+          event_date: date,
+          venue,
+          timezone: settings.timezone,
+          warning_seconds: settings.warningSecs,
+          urgent_seconds: settings.urgentSecs,
+          auto_advance: settings.autoAdvance,
+          lifecycle_status: "draft",
+        })
+        .select("*")
+        .single();
+      if (
+        direct.error
+        && (direct.error.message?.includes("lifecycle_status") || direct.error.message?.includes("Could not find"))
+      ) {
+        direct = await supabase
+          .from("events")
+          .insert({
+            owner_id: session.user.id,
+            name: name.trim(),
+            event_date: date,
+            venue,
+            timezone: settings.timezone,
+            warning_seconds: settings.warningSecs,
+            urgent_seconds: settings.urgentSecs,
+            auto_advance: settings.autoAdvance,
+            status: "draft",
+          })
+          .select("*")
+          .single();
+      }
+      createdRows = direct.data ? [direct.data] : null;
+      error = direct.error;
+      if (!direct.error) creationMode = "direct";
+    }
     const created = Array.isArray(createdRows) ? createdRows[0] : createdRows;
     if (error || !created) {
       setFeedback(formatEventCreationError(error ?? undefined));
@@ -616,6 +722,66 @@ export function useEventData(session: Session): UseEventDataReturn {
       });
       return "";
     }
+    if (creationMode !== "atomic") {
+      const agendaResult = await supabase.from("agenda_items").upsert(
+        segments.map((segment, index) => ({
+          id: segment.id,
+          event_id: created.id,
+          position: index,
+          title: segment.title,
+          speaker: segment.person,
+          notes: segment.notes || null,
+          planned_duration_seconds: segment.duration * 60,
+          scheduled_start: `${date}T${segment.time}:00`,
+          segment_type: segment.segmentType,
+          timer_mode: segment.timerMode,
+          warning_seconds: segment.warningSecs,
+          urgent_seconds: segment.urgentSecs,
+        })),
+      );
+      if (agendaResult.error) {
+        await supabase.from("events").delete().eq("id", created.id);
+        setFeedback(formatEventCreationError(agendaResult.error));
+        reportError({
+          context: "event_creation",
+          message: "Agenda bootstrap failed after event creation",
+          error_code: agendaResult.error.code,
+          error_details: agendaResult.error.details,
+          error_hint: agendaResult.error.hint,
+          timestamp: new Date().toISOString(),
+        });
+        return "";
+      }
+    }
+    const firstSegment = segments[0];
+    if (firstSegment && creationMode !== "atomic") {
+      const existingRuntime = await loadRuntimeRow(created.id, true);
+      const runtimeSeed: EventData = {
+        id: created.id,
+        ownerId: session.user.id,
+        name,
+        date,
+        venue,
+        lifecycle: "draft",
+        segments,
+        active: 0,
+        remaining: firstSegment.timerMode === "count_up" ? 0 : firstSegment.duration * 60,
+        timerDuration: firstSegment.timerMode === "count_up" ? 0 : firstSegment.duration * 60,
+        timerStartedAt: null,
+        timerMode: firstSegment.timerMode,
+        running: false,
+        message: "",
+        messagePriority: "normal",
+        messageTarget: null,
+        messageExpiresAt: null,
+        updatedAt: Date.now(),
+        runtimeVersion: 0,
+        settings,
+        segmentRuns: [],
+        activeCues: [],
+      };
+      await persistRuntime(runtimeSeed, existingRuntime?.version ?? 0);
+    }
     const fresh: EventData = {
       id: created.id,
       ownerId: session.user.id,
@@ -625,8 +791,8 @@ export function useEventData(session: Session): UseEventDataReturn {
       lifecycle: "draft",
       segments,
       active: 0,
-      remaining: segments[0]?.duration ? segments[0].duration * 60 : 0,
-      timerDuration: segments[0]?.duration ? segments[0].duration * 60 : 0,
+      remaining: segments[0]?.timerMode === "count_up" ? 0 : segments[0]?.duration ? segments[0].duration * 60 : 0,
+      timerDuration: segments[0]?.timerMode === "count_up" ? 0 : segments[0]?.duration ? segments[0].duration * 60 : 0,
       timerStartedAt: null,
       timerMode: segments[0]?.timerMode ?? "countdown",
       running: false,
@@ -644,11 +810,11 @@ export function useEventData(session: Session): UseEventDataReturn {
     setCurrentId(fresh.id);
     setFeedback(successMessage);
     return fresh.id;
-  }, [session.user.id]);
+  }, [persistRuntime, session.user.id]);
 
-  const createEvent = async (name: string, date: string, venue: string) => {
+  const createEvent = async (name: string, date: string, venue: string): Promise<string> => {
     const settings = defaultSettings();
-    await createEventRecord(name, date, venue, settings, [], "Event saved to Event Timer cloud");
+    return createEventRecord(name, date, venue, settings, [], "Event saved to Event Timer cloud");
   };
 
   const duplicateEvent = useCallback(async (sourceId: string, newName: string, newDate: string): Promise<string> => {

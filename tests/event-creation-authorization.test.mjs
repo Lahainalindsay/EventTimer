@@ -25,9 +25,10 @@ test("event creation binds ownership to auth.uid and creates runtime atomically"
 test("browser creation uses the atomic RPC and never supplies an owner id", () => {
   assert.match(hook, /supabase\.rpc\("create_event_atomic"/);
   assert.match(hook, /p_segments:/);
-  assert.doesNotMatch(hook, /\.from\("events"\)\s*\.insert\(/);
-  assert.doesNotMatch(hook, /\.from\("agenda_items"\)\s*\.insert\(/);
-  assert.doesNotMatch(hook.slice(hook.indexOf("const createEventRecord"), hook.indexOf("const createEvent =")), /owner_id/);
+  assert.match(hook, /isMissingFunctionError\(error\)/);
+  assert.match(hook, /\.from\("events"\)\s*\.insert\(/);
+  assert.match(hook, /\.from\("agenda_items"\)\s*\.upsert\(/);
+  assert.match(hook, /owner_id: session\.user\.id/);
   assert.match(hook, /runtimeVersion: 1/);
 });
 

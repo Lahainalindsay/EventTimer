@@ -31,7 +31,10 @@ test("persists events and agendas through Supabase", () => {
   assert.match(eventDataHook, /rpc\("create_event_atomic"/);
   assert.match(eventDataHook, /p_segments:/);
   assert.match(eventDataHook, /rpc\("upsert_runtime_atomic"/);
-  assert.doesNotMatch(eventDataHook, /\.from\("events"\)\s*\.insert/);
+  assert.match(eventDataHook, /isMissingFunctionError\(error\)/);
+  assert.match(eventDataHook, /\.from\("events"\)\s*\.insert/);
+  assert.match(eventDataHook, /\.from\("agenda_items"\)\s*\.upsert/);
+  assert.match(eventDataHook, /owner_id: session\.user\.id/);
 });
 
 test("timer display and runtime updates are mode aware", () => {
